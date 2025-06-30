@@ -75,9 +75,13 @@ function(local_qtwayland_server_protocol_treeland target)
 
     target_sources(${target} PRIVATE "${_code}")
 
-    add_custom_target(generate_protocols ALL
-                      DEPENDS ${_header} ${_code}
-    )
-    add_dependencies(${target} generate_protocols)
+    set(_target_name "generate_protocols_${target}_${ARGS_BASENAME}")
+
+    if(NOT TARGET ${_target_name})
+        add_custom_target(${_target_name} ALL
+                          DEPENDS ${_header} ${_code}
+        )
+    endif()
+    add_dependencies(${target} ${_target_name})
 
 endfunction()
