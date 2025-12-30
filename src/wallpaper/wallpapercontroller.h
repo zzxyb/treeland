@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include "mpvvideoitem.h"
+
 #include <woutput.h>
 
 #include <QQmlEngine>
 #include <QQuickItem>
 
-Q_MOC_INCLUDE("wallpaper/wallpaperimage.h")
+// Q_MOC_INCLUDE("wallpaper/wallpaperimage.h")
 
 class WallpaperImage;
 
@@ -17,7 +19,8 @@ class WallpaperController : public QObject
     Q_OBJECT
     Q_PROPERTY(WAYLIB_SERVER_NAMESPACE::WOutput* output READ output WRITE setOutput NOTIFY outputChanged REQUIRED)
     Q_PROPERTY(WallpaperType type READ type WRITE setType NOTIFY typeChanged)
-    Q_PROPERTY(WallpaperImage* proxy READ proxy NOTIFY proxyChanged)
+    // Q_PROPERTY(WallpaperImage* proxy READ proxy NOTIFY proxyChanged)
+    Q_PROPERTY(MpvVideoItem* proxy READ proxy NOTIFY proxyChanged)
     Q_PROPERTY(bool lock READ lock WRITE setLock NOTIFY lockChanged)
 
     QML_ELEMENT
@@ -55,7 +58,8 @@ public:
         return m_output;
     }
 
-    WallpaperImage *proxy() const;
+    // WallpaperImage *proxy() const;
+    MpvVideoItem *proxy() const;
 
     void setLock(bool state);
     bool lock() const;

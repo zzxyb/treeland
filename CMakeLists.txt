@@ -117,9 +117,9 @@ add_subdirectory(tools)
 add_subdirectory(misc)
 add_subdirectory(tests)
 
-if (BUILD_TREELAND_EXAMPLES)
-    add_subdirectory(examples)
-endif()
+# if (BUILD_TREELAND_EXAMPLES)
+#     add_subdirectory(examples)
+# endif()
 
 # Display feature summary
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)

@@ -15,6 +15,8 @@
 #include "wsessionlock.h"
 #include "wsessionlockmanager.h"
 #endif
+#include "mpvvideoitem.h"
+#include "wallpapermanager.h"
 
 #include <rhi/qrhi.h>
 
@@ -2407,6 +2409,13 @@ WXWayland *Helper::defaultXWaylandSocket() const
  */
 void Helper::updateActiveUserSession(const QString &username, int id)
 {
+    foreach (auto output, m_outputList) {
+        WOutput *wOutput = output->output();
+        MpvVideoItem *video = WallpaperManager::instance()->get(wOutput);
+        video->startSlowDown();
+    }
+
+    qWarning() << "xyb-----unlock";
     // Get previous active session
     auto previous = m_activeSession.lock();
     // Get new session for uid, creating if necessary

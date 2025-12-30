@@ -15,6 +15,7 @@ class WOutputItem;
 
 class WallpaperImage;
 class WallpaperController;
+class MpvVideoItem;
 
 class WallpaperManager : public QObject
 {
@@ -25,25 +26,33 @@ class WallpaperManager : public QObject
 public:
     static WallpaperManager *instance();
 
+    MpvVideoItem *get(WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem) const;
+    MpvVideoItem *get(WAYLIB_SERVER_NAMESPACE::WOutput *output) const;
+
 private:
     friend class WallpaperImage;
-    void add(WallpaperImage *proxy, WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem);
-    void remove(WallpaperImage *proxy);
+    friend class MpvVideoItem;
+    // void add(WallpaperImage *proxy, WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem);
+    // void remove(WallpaperImage *proxy);
+    void add(MpvVideoItem *proxy, WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem);
+    void remove(MpvVideoItem *proxy);
     void remove(WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem);
 
 private:
     friend class WallpaperImage;
     friend class WallpaperController;
+    friend class MpvVideoItem;
     bool isLocked(const WallpaperController *controller) const;
     bool isSelfLocked(const WallpaperController *controller) const;
 
 private:
     friend class WallpaperController;
-    WallpaperImage *get(WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem) const;
-    WallpaperImage *get(WAYLIB_SERVER_NAMESPACE::WOutput *output) const;
+    // WallpaperImage *get(WAYLIB_SERVER_NAMESPACE::WOutputItem *outputItem) const;
+    // WallpaperImage *get(WAYLIB_SERVER_NAMESPACE::WOutput *output) const;
     void setLock(WallpaperController *controller, bool lock);
 
 private:
-    QMap<WAYLIB_SERVER_NAMESPACE::WOutputItem *, WallpaperImage *> m_proxys;
+    // QMap<WAYLIB_SERVER_NAMESPACE::WOutputItem *, WallpaperImage *> m_proxys;
+    QMap<WAYLIB_SERVER_NAMESPACE::WOutputItem *, MpvVideoItem *> m_proxys;
     QList<WallpaperController *> m_proxyLockList;
 };

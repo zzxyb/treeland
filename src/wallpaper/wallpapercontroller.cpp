@@ -3,7 +3,8 @@
 
 #include "wallpapercontroller.h"
 
-#include "wallpaperimage.h"
+// #include "wallpaperimage.h"
+// #include "mpvvideoitem.h"
 #include "wallpapermanager.h"
 
 WallpaperController::WallpaperController(QObject *parent)
@@ -45,6 +46,16 @@ void WallpaperController::setOutput(WAYLIB_SERVER_NAMESPACE::WOutput *output)
     Q_EMIT proxyChanged();
 }
 
+MpvVideoItem *WallpaperController::proxy() const
+{
+    if (!m_output) {
+        return nullptr;
+    }
+
+    auto *manager = WallpaperManager::instance();
+    return manager->get(m_output);
+}
+
 void WallpaperController::updateState()
 {
     if (!m_output) {
@@ -73,15 +84,15 @@ void WallpaperController::updateState()
     Q_EMIT typeChanged();
 }
 
-WallpaperImage *WallpaperController::proxy() const
-{
-    if (!m_output) {
-        return nullptr;
-    }
+// WallpaperImage *WallpaperController::proxy() const
+// {
+//     if (!m_output) {
+//         return nullptr;
+//     }
 
-    auto *manager = WallpaperManager::instance();
-    return manager->get(m_output);
-}
+//     auto *manager = WallpaperManager::instance();
+//     return manager->get(m_output);
+// }
 
 void WallpaperController::setLock(bool lock)
 {

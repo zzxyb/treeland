@@ -97,13 +97,14 @@ OutputItem {
     Item {
         clip: true
         anchors.fill: parent
-        Wallpaper {
+        MpvVideoItem {
             id: wallpaper
             output: rootOutputItem.output
             workspace: Helper.workspace.current
             anchors.fill: parent
-            fillMode: Image.PreserveAspectCrop
-            retainWhileLoading: true
+            // fillMode: Image.PreserveAspectCrop
+            // retainWhileLoading: true
+            onReady: loadFile("/usr/share/wallpapers/deepin/deepin25_4k_30fps.mp4")
             clip: true
 
             states: [

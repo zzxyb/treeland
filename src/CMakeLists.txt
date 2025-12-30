@@ -23,6 +23,7 @@ pkg_search_module(WAYLAND REQUIRED IMPORTED_TARGET wayland-server)
 pkg_search_module(LIBINPUT REQUIRED IMPORTED_TARGET libinput)
 pkg_search_module(XCB REQUIRED IMPORTED_TARGET xcb)
 pkg_check_modules(PAM REQUIRED IMPORTED_TARGET pam)
+pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 # qt_finalize_target will collect all executable's private dependencies that are CMake targets
 
 configure_file("common/constants.h.in" "common/constants.h" IMMEDIATE @ONLY)
@@ -175,10 +176,14 @@ qt_add_qml_module(libtreeland
         utils/fpsdisplaymanager.h
         wallpaper/wallpapercontroller.cpp
         wallpaper/wallpapercontroller.h
-        wallpaper/wallpaperimage.cpp
-        wallpaper/wallpaperimage.h
+        # wallpaper/wallpaperimage.cpp
+        # wallpaper/wallpaperimage.h
         wallpaper/wallpapermanager.cpp
         wallpaper/wallpapermanager.h
+        wallpaper/mpvvideocontroller.h
+        wallpaper/mpvvideocontroller.cpp
+        wallpaper/mpvvideoitem.h
+        wallpaper/mpvvideoitem.cpp
         workspace/workspace.cpp
         workspace/workspace.h
         workspace/workspaceanimationcontroller.cpp
@@ -317,6 +322,7 @@ target_link_libraries(libtreeland
         PkgConfig::WAYLAND
         PkgConfig::LIBINPUT
         PkgConfig::XCB
+        PkgConfig::MPV
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:DDM::Common>
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:PkgConfig::PAM>
 )
