@@ -96,13 +96,13 @@ OutputItem {
     Item {
         clip: true
         anchors.fill: parent
-        Wallpaper {
+        Item {
             id: wallpaper
-            output: rootOutputItem.output
-            workspace: Helper.workspace.current
-            anchors.fill: parent
-            clip: true
 
+            property bool play
+            property Wallpaper currentWallpaper: fontWallpaper
+            clip: true
+            anchors.fill: parent
             states: [
                 State {
                     name: "Normal"
@@ -172,34 +172,94 @@ OutputItem {
                 }
             ]
 
-            Connections {
-                target: Helper
-                function onLaunchpadMappedChanged(output, mapped) {
-                    if (output !== rootOutputItem.output) {
-                        return;
-                    }
+            Wallpaper {
+                id: backWallpaper
 
-                    wallpaper.state = mapped ? "Scale" : "Normal"
+                disableUpdate: true
+                wallpaperRole: Wallpaper.Desktop
+                output: rootOutputItem.output
+                workspace: Helper.workspace.current
+                opacity: 0
+                live: false
+                z: 0
+                onSourceChanged: {
+                    wallpaper.currentWallpaper = backWallpaper
+
+                    backWallpaper.disableUpdate = true
+                    backWallpaper.live = true
+                    backWallpaper.z = 1
+                    backWallpaper.opacity = 1
+
+                    fontWallpaper.disableUpdate = false
+                    fontWallpaper.z = 0
+                    fontWallpaper.opacity = 0
+                }
+                Behavior on opacity {
+                    enabled: wallpaper.state = "Normal"
+                    NumberAnimation {
+                        duration: 500
+                        easing.type: Easing.InOutQuad
+                    }
+                }
+            }
+
+            Wallpaper {
+                id: fontWallpaper
+
+                wallpaperRole: Wallpaper.Desktop
+                output: rootOutputItem.output
+                workspace: Helper.workspace.current
+                z: 1
+                onSourceChanged: {
+                    wallpaper.currentWallpaper = fontWallpaper
+
+                    fontWallpaper.disableUpdate = true
+                    fontWallpaper.live = true
+                    fontWallpaper.z = 1
+                    fontWallpaper.opacity = 1
+
+                    backWallpaper.disableUpdate = false
+                    backWallpaper.live = false
+                    backWallpaper.z = 0
                 }
 
-                function onShowDesktopRequested(output) {
-                    if (output !== rootOutputItem.output) {
-                        return;
+                Behavior on opacity {
+                    enabled: wallpaper.state = "Normal"
+                    NumberAnimation {
+                        duration: 500
+                        easing.type: Easing.InOutQuad
                     }
+                }
+            }
+        }
 
-                    wallpaper.state = "Normal"
-                    wallpaper.play = true
-                    wallpaper.slowDown()
+        Connections {
+            target: Helper
+            function onLaunchpadMappedChanged(output, mapped) {
+                if (output !== rootOutputItem.output) {
+                    return;
                 }
 
-                function onStartLockscreened(output, showAnimation) {
-                    if (output !== rootOutputItem.output) {
-                        return;
-                    }
+                wallpaper.state = mapped ? "Scale" : "Normal"
+            }
 
-                    wallpaper.play = false
-                    wallpaper.state = showAnimation ? "ScaleTo1.2" : "ScaleWithoutAnimation"
+            function onShowDesktopRequested(output) {
+                if (output !== rootOutputItem.output) {
+                    return;
                 }
+
+                wallpaper.state = "Normal"
+                wallpaper.currentWallpaper.play = true
+                wallpaper.currentWallpaper.slowDown()
+            }
+
+            function onStartLockscreened(output, showAnimation) {
+                if (output !== rootOutputItem.output) {
+                    return;
+                }
+
+                wallpaper.currentWallpaper.play = false
+                wallpaper.state = showAnimation ? "ScaleTo1.2" : "ScaleWithoutAnimation"
             }
         }
     }

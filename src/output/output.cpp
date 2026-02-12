@@ -44,7 +44,9 @@ Output *Output::create(WOutput *output, QQmlEngine *engine, QObject *parent)
     delegate.setInitialProperties(obj, { { "forceSoftwareCursor", isSoftwareCursor(output) } });
     delegate.completeCreate();
     WOutputItem *outputItem = qobject_cast<WOutputItem *>(obj);
-    Q_ASSERT(outputItem);
+    if (!outputItem) {
+        qCCritical(treelandOutput) << "Failed to create PrimaryOutput delegate:" << delegate.errorString();
+    }
     QQmlEngine::setObjectOwnership(outputItem, QQmlEngine::CppOwnership);
     outputItem->setOutput(output);
 
