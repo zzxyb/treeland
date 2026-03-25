@@ -4,28 +4,23 @@
 #include "woutputlayout.h"
 #include "private/woutputlayout_p.h"
 #include "woutput.h"
+#include "wserver.h"
 
-#include <qwoutput.h>
-#include <qwbox.h>
-#include <qwoutputlayout.h>
-#include <qwdisplay.h>
+extern "C" {
+#include <wlr/types/wlr_output_layout.h>
+}
 
 #include <QRect>
 
-QW_USE_NAMESPACE
 WAYLIB_SERVER_BEGIN_NAMESPACE
-
-WOutputLayoutPrivate::WOutputLayoutPrivate(WOutputLayout *qq)
-    : WWrapObjectPrivate(qq)
-{
-
-}
 
 WOutputLayoutPrivate::~WOutputLayoutPrivate()
 {
     for (auto o : std::as_const(outputs)) {
         o->setLayout(nullptr);
     }
+    if (handle)
+        wlr_output_layout_destroy(handle);
 }
 
 void WOutputLayoutPrivate::doAdd(WOutput *output)
@@ -33,12 +28,8 @@ void WOutputLayoutPrivate::doAdd(WOutput *output)
     Q_ASSERT(!outputs.contains(output));
     outputs.append(output);
 
-    W_Q(WOutputLayout);
     Q_ASSERT(output->layout() == q);
 
-    output->safeConnect(&WOutput::effectiveSizeChanged, q, [this] {
-        updateImplicitSize();
-    });
     updateImplicitSize();
 
     Q_EMIT q->outputAdded(output);
@@ -47,11 +38,9 @@ void WOutputLayoutPrivate::doAdd(WOutput *output)
 
 void WOutputLayoutPrivate::updateImplicitSize()
 {
-    W_Q(WOutputLayout);
-
     wlr_box tmp_box;
-    handle()->get_box(nullptr, &tmp_box);
-    auto newSize = qw_box(tmp_box).toQRect();
+    wlr_output_layout_get_box(handle, nullptr, &tmp_box);
+    QRect newSize(tmp_box.x, tmp_box.y, tmp_box.width, tmp_box.height);
 
     if (implicitWidth != newSize.x() + newSize.width()) {
         implicitWidth = newSize.x() + newSize.width();
@@ -63,72 +52,68 @@ void WOutputLayoutPrivate::updateImplicitSize()
     }
 }
 
-WOutputLayout::WOutputLayout(WOutputLayoutPrivate &dd, WServer *server)
-    : WWrapObject(dd, server)
+WOutputLayout::WOutputLayout(WOutputLayoutPrivate *dd, WServer *server, QObject *parent)
+    : QObject(parent)
+    , d(dd)
 {
-    auto h = new qw_output_layout(*server->handle());
-    initHandle(h);
-
-    handle()->set_data(this, this);
+    d->handle = wlr_output_layout_create(server->handle());
+    Q_ASSERT(d->handle);
+    d->handle->data = this;
 }
 
-WOutputLayout::WOutputLayout(WServer *server)
-    : WOutputLayout(*new WOutputLayoutPrivate(this), server)
-{
+WOutputLayout::WOutputLayout(WServer *server, QObject *parent)
+    : WOutputLayout(new WOutputLayoutPrivate(this), server, parent)
+{}
 
+WOutputLayout::~WOutputLayout()
+{
+    // d->~WOutputLayoutPrivate() handles wlr_output_layout_destroy
 }
 
-qw_output_layout *WOutputLayout::handle() const
+wlr_output_layout *WOutputLayout::handle() const
 {
-    W_DC(WOutputLayout);
-    return d->handle();
+    return d->handle;
 }
 
 const QList<WOutput*> &WOutputLayout::outputs() const
 {
-    W_DC(WOutputLayout);
     return d->outputs;
 }
 
 void WOutputLayout::add(WOutput *output, const QPoint &pos)
 {
-    W_D(WOutputLayout);
     output->setLayout(this);
-    d->handle()->add(output->nativeHandle(), pos.x(), pos.y());
+    wlr_output_layout_add(d->handle, output->handle(), pos.x(), pos.y());
     d->doAdd(output);
 }
 
 void WOutputLayout::autoAdd(WOutput *output)
 {
-    W_D(WOutputLayout);
     output->setLayout(this);
-    d->handle()->add_auto(output->nativeHandle());
+    wlr_output_layout_add_auto(d->handle, output->handle());
     d->doAdd(output);
 }
 
 void WOutputLayout::move(WOutput *output, const QPoint &pos)
 {
-    W_D(WOutputLayout);
     Q_ASSERT(d->outputs.contains(output));
     Q_ASSERT(output->layout());
 
     if (output->position() == pos)
         return;
 
-    d->handle()->add(output->nativeHandle(), pos.x(), pos.y());
+    wlr_output_layout_add(d->handle, output->handle(), pos.x(), pos.y());
 
     d->updateImplicitSize();
 }
 
 void WOutputLayout::remove(WOutput *output)
 {
-    W_D(WOutputLayout);
     Q_ASSERT(d->outputs.contains(output));
     d->outputs.removeOne(output);
 
-    d->handle()->remove(output->nativeHandle());
+    wlr_output_layout_remove(d->handle, output->handle());
     output->setLayout(nullptr);
-    output->safeDisconnect(this);
     d->updateImplicitSize();
 
     Q_EMIT outputRemoved(output);
@@ -137,14 +122,12 @@ void WOutputLayout::remove(WOutput *output)
 
 QList<WOutput*> WOutputLayout::getIntersectedOutputs(const QRect &geometry) const
 {
-    W_DC(WOutputLayout);
-
     QList<WOutput*> outputs;
 
     for (auto o : std::as_const(d->outputs)) {
         wlr_box tmp;
-        d->handle()->get_box(o->nativeHandle(), &tmp);
-        const QRect og = qw_box(tmp).toQRect();
+        wlr_output_layout_get_box(d->handle, o->handle(), &tmp);
+        const QRect og(tmp.x, tmp.y, tmp.width, tmp.height);
         if (og.intersects(geometry))
             outputs << o;
     }
@@ -154,13 +137,11 @@ QList<WOutput*> WOutputLayout::getIntersectedOutputs(const QRect &geometry) cons
 
 int WOutputLayout::implicitWidth() const
 {
-    W_DC(WOutputLayout);
     return d->implicitWidth;
 }
 
 int WOutputLayout::implicitHeight() const
 {
-    W_DC(WOutputLayout);
     return d->implicitHeight;
 }
 

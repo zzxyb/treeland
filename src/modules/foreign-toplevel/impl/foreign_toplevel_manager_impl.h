@@ -4,8 +4,6 @@
 #pragma once
 
 #include <wayland-server-core.h>
-
-#include <qwdisplay.h>
 #include <qwoutput.h>
 #include <qwcompositor.h>
 
@@ -29,7 +27,7 @@ public:
     QList<treeland_dock_preview_context_v1 *> dock_preview;
     QList<treeland_foreign_toplevel_handle_v1 *> toplevels;
 
-    static treeland_foreign_toplevel_manager_v1 *create(QW_NAMESPACE::qw_display *display);
+    static treeland_foreign_toplevel_manager_v1 *create(wl_display *display);
 
 Q_SIGNALS:
     void before_destroy();

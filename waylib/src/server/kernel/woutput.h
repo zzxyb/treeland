@@ -5,7 +5,6 @@
 
 #include <wglobal.h>
 #include <wtypes.h>
-#include <qwoutput.h>
 
 #include <QObject>
 #include <QSize>
@@ -20,11 +19,10 @@ class QScreen;
 class QQuickWindow;
 QT_END_NAMESPACE
 
-QW_BEGIN_NAMESPACE
-class qw_renderer;
-class qw_swapchain;
-class qw_allocator;
-QW_END_NAMESPACE
+struct wlr_output;
+struct wlr_renderer;
+struct wlr_swapchain;
+struct wlr_allocator;
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
@@ -36,10 +34,9 @@ class WCursor;
 class WBackend;
 class WServer;
 class WOutputPrivate;
-class WAYLIB_SERVER_EXPORT WOutput : public WWrapObject
+class WAYLIB_SERVER_EXPORT WOutput : public QObject
 {
     Q_OBJECT
-    W_DECLARE_PRIVATE(WOutput)
     Q_PROPERTY(bool enabled READ isEnabled NOTIFY enabledChanged)
     Q_PROPERTY(QSize size READ effectiveSize NOTIFY effectiveSizeChanged)
     Q_PROPERTY(Transform orientation READ orientation NOTIFY orientationChanged)
@@ -62,25 +59,20 @@ public:
     };
     Q_ENUM(Transform)
 
-    explicit WOutput(QW_NAMESPACE::qw_output *handle, WBackend *backend);
+    explicit WOutput(wlr_output *handle, WBackend *backend, QObject *parent = nullptr);
     ~WOutput();
 
-    WBackend *backend() const;
-    WServer *server() const;
-    QW_NAMESPACE::qw_renderer *renderer() const;
-    QW_NAMESPACE::qw_swapchain *swapchain() const;
-    QW_NAMESPACE::qw_allocator *allocator() const;
+    wlr_renderer *renderer() const;
+    wlr_swapchain *swapchain() const;
+    wlr_allocator *allocator() const;
     bool configurePrimarySwapchain(const QSize &size, uint32_t format,
-                                   QW_NAMESPACE::qw_swapchain **swapchain,
+                                   wlr_swapchain **swapchain,
                                    bool doTest = true);
     bool configureCursorSwapchain(const QSize &size, uint32_t format,
-                                  QW_NAMESPACE::qw_swapchain **swapchain);
+                                  wlr_swapchain **swapchain);
 
-    QW_NAMESPACE::qw_output *handle() const;
-    wlr_output *nativeHandle() const;
-
-    static WOutput *fromHandle(const QW_NAMESPACE::qw_output *handle);
-
+    wlr_output *handle() const;
+    static WOutput *fromHandle(wlr_output *handle);
     static WOutput *fromScreen(const QScreen *screen);
 
     QString name() const;
@@ -120,6 +112,7 @@ Q_SIGNALS:
     void cursorAdded(WAYLIB_SERVER_NAMESPACE::WCursor *cursor);
     void cursorRemoved(WAYLIB_SERVER_NAMESPACE::WCursor *cursor);
     void cursorListChanged();
+    void handleDestroyed(WOutput * = nullptr);
 
 private:
     friend class QWlrootsIntegration;
@@ -128,6 +121,8 @@ private:
 
     friend class WServer;
     friend class WServerPrivate;
+    friend class WOutputPrivate;
+    std::unique_ptr<WOutputPrivate> d;
 };
 
 WAYLIB_SERVER_END_NAMESPACE

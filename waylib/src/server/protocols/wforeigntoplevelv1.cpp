@@ -218,7 +218,7 @@ QByteArrayView WForeignToplevel::interfaceName() const
 
 void WForeignToplevel::create(WServer *server)
 {
-    m_handle = qw_foreign_toplevel_manager_v1::create(*server->handle());
+    m_handle = qw_foreign_toplevel_manager_v1::create(server->handle());
 }
 
 void WForeignToplevel::destroy([[maybe_unused]] WServer *server)

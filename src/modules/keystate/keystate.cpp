@@ -151,7 +151,7 @@ QByteArrayView KeyStateV5::interfaceName() const
 
 void KeyStateV5::create(WServer *server)
 {
-    d->init(server->handle()->handle(), ORG_KDE_KWIN_KEYSTATE_VERSION);
+    d->init(server->handle(), ORG_KDE_KWIN_KEYSTATE_VERSION);
 }
 
 void KeyStateV5::destroy([[maybe_unused]] WServer *server)

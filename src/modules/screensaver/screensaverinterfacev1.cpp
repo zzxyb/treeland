@@ -66,7 +66,7 @@ void ScreensaverInterfaceV1::uninhibit(wl_resource *res) {
 }
 
 void ScreensaverInterfaceV1::create(WServer *server) {
-    m_global = wl_global_create(server->handle()->handle(), &treeland_screensaver_v1_interface,
+    m_global = wl_global_create(server->handle(), &treeland_screensaver_v1_interface,
                                 treeland_screensaver_v1_interface.version, this, handleBindingGlobal);
 }
 

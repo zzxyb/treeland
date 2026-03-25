@@ -3,12 +3,9 @@
 
 #include "winputdevice.h"
 #include "wseat.h"
-#include "private/wglobal_p.h"
-
-#include <qwinputdevice.h>
+#include "wcontainerof.h"
 
 #include <QDebug>
-#include <QFile>
 #include <QInputDevice>
 #include <QPointer>
 #include <QScopeGuard>
@@ -18,116 +15,53 @@
 
 #include <libudev.h>
 
-QW_USE_NAMESPACE
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 // Input device management and events
 Q_LOGGING_CATEGORY(waylibInput, "waylib.server.input", QtInfoMsg)
 
-// DeviceInfoParser implementation
-DeviceInfoParser& DeviceInfoParser::instance()
-{
-    static DeviceInfoParser parser;
-    return parser;
-}
-
-void DeviceInfoParser::refreshDeviceInfo()
-{
-    QMutexLocker locker(&m_mutex);
-    m_deviceMap.clear();
-
-    QFile procFile("/proc/bus/input/devices");
-    if (!procFile.open(QIODevice::ReadOnly)) {
-        return;
-    }
-
-    QString content = procFile.readAll();
-    QStringList blocks = content.split("\n\n", Qt::SkipEmptyParts);
-
-    for (const QString& block : blocks) {
-        parseDeviceBlock(block.trimmed());
-    }
-}
-
-void DeviceInfoParser::parseDeviceBlock(const QString& block)
-{
-    static const QRegularExpression nameRegex("Name=\"([^\"]+)\"");
-    ProcDeviceInfo info;
-    QStringList lines = block.split('\n');
-
-    for (const QString& line : lines) {
-        if (line.startsWith("N: Name=")) {
-            auto match = nameRegex.match(line);
-            if (match.hasMatch()) {
-                info.name = match.captured(1);
-            }
-        }
-        else if (line.startsWith("P: Phys=")) {
-            info.physPath = line.mid(8);
-        }
-    }
-
-    if (info.isValid()) {
-        m_deviceMap[info.name] = info;
-    }
-}
-
-QString DeviceInfoParser::getPhysicalPath(const QString& deviceName)
-{
-    QMutexLocker locker(&m_mutex);
-    if (!m_deviceMap.contains(deviceName)) {
-        locker.unlock();
-        refreshDeviceInfo();
-        locker.relock();
-    }
-
-    return m_deviceMap.value(deviceName).physPath;
-}
-
-class Q_DECL_HIDDEN WInputDevicePrivate : public WWrapObjectPrivate
+class Q_DECL_HIDDEN WInputDevicePrivate
 {
 public:
-    WInputDevicePrivate(WInputDevice *qq, void *handle)
-        : WWrapObjectPrivate(qq)
+    WInputDevicePrivate(WInputDevice *qq, wlr_input_device *_handle)
+        : q(qq)
+        , handle(_handle)
     {
-        initHandle(reinterpret_cast<qw_input_device*>(handle));
-        this->handle()->set_data(this, qq);
+        handle->data = qq;
     }
 
-    void instantRelease() override {
-        if (handle()) {
-            qCDebug(waylibInput) << "Releasing input device:" 
-                                << QString::fromUtf8(nativeHandle()->name);
-            handle()->set_data(nullptr, nullptr);
-            if (seat)
-                seat->detachInputDevice(q_func());
-        }
-    }
+    static void onDestroyCallback(wl_listener *listener, void *data);
 
-    WWRAP_HANDLE_FUNCTIONS(qw_input_device, wlr_input_device)
-
-    W_DECLARE_PUBLIC(WInputDevice)
-
+    WInputDevice *q;
     QPointer<QInputDevice> qtDevice;
     QPointer<QObject> hoverTarget;
     WSeat *seat = nullptr;
+    wlr_input_device *handle = nullptr;
+
+    wl_listener destroyListener;
 };
 
-WInputDevice::WInputDevice(qw_input_device *handle)
-    : WWrapObject(*new WInputDevicePrivate(this, handle))
+WInputDevice::WInputDevice(wlr_input_device *handle)
+    : d(new WInputDevicePrivate(this, handle))
 {
-
+    d->destroyListener.notify = WInputDevicePrivate::onDestroyCallback;
+    wl_signal_add(&d->handle->events.destroy, &d->destroyListener);
 }
 
-qw_input_device *WInputDevice::handle() const
+WInputDevice::~WInputDevice()
 {
-    W_DC(WInputDevice);
-    return d->handle();
+    wl_list_remove(&d->destroyListener.link);
+    d->seat->detachInputDevice(this);
 }
 
-WInputDevice *WInputDevice::fromHandle(const qw_input_device *handle)
+wlr_input_device *WInputDevice::handle() const
 {
-    return handle->get_data<WInputDevice>();
+    return d->handle;
+}
+
+WInputDevice *WInputDevice::fromHandle(wlr_input_device *handle)
+{
+    return static_cast<WInputDevice *>(handle->data);
 }
 
 WInputDevice *WInputDevice::from(const QInputDevice *device)
@@ -139,9 +73,7 @@ WInputDevice *WInputDevice::from(const QInputDevice *device)
 
 WInputDevice::Type WInputDevice::type() const
 {
-    W_DC(WInputDevice);
-
-    switch (d->nativeHandle()->type) {
+    switch (d->handle->type) {
     case WLR_INPUT_DEVICE_KEYBOARD: return Type::Keyboard;
     case WLR_INPUT_DEVICE_POINTER: return Type::Pointer;
     case WLR_INPUT_DEVICE_TOUCH: return Type::Touch;
@@ -150,17 +82,15 @@ WInputDevice::Type WInputDevice::type() const
     case WLR_INPUT_DEVICE_SWITCH: return Type::Switch;
     }
 
-    qCWarning(waylibInput) << "Unknown input device type:" << d->nativeHandle()->type 
-                          << "from device:" << QString::fromUtf8(d->nativeHandle()->name);
+    qCWarning(waylibInput) << "Unknown input device type:" << handle()->type
+                           << "from device:" << QString::fromUtf8(handle()->name);
     return Type::Unknow;
 }
 
 QString WInputDevice::name() const
 {
-    W_DC(WInputDevice);
-
-    if (d->nativeHandle() && d->nativeHandle()->name) {
-        return QString::fromUtf8(d->nativeHandle()->name);
+    if (d->handle && d->handle->name) {
+        return QString::fromUtf8(d->handle->name);
     }
 
     if (d->qtDevice) {
@@ -172,9 +102,8 @@ QString WInputDevice::name() const
 
 void WInputDevice::setSeat(WSeat *seat)
 {
-    W_D(WInputDevice);
     if (d->seat != seat) {
-        qCDebug(waylibInput) << "Input device" << QString::fromUtf8(d->nativeHandle()->name)
+        qCDebug(waylibInput) << "Input device" << QString::fromUtf8(handle()->name)
                             << "assigned to seat:" << (seat ? seat->name() : QString("(null)"));
         d->seat = seat;
     }
@@ -182,32 +111,28 @@ void WInputDevice::setSeat(WSeat *seat)
 
 WSeat *WInputDevice::seat() const
 {
-    W_DC(WInputDevice);
     return d->seat;
 }
 
 void WInputDevice::setQtDevice(QInputDevice *device)
 {
-    W_D(WInputDevice);
     if (d->qtDevice != device) {
         qCDebug(waylibInput) << "Qt device" << (device ? device->name() : QString("(null)"))
-                            << "associated with input device:" 
-                            << QString::fromUtf8(d->nativeHandle()->name);
+                            << "associated with input device:"
+                            << QString::fromUtf8(handle()->name);
         d->qtDevice = device;
     }
 }
 
 QInputDevice *WInputDevice::qtDevice() const
 {
-    W_DC(WInputDevice);
     return d->qtDevice;
 }
 
 QString WInputDevice::devicePath() const
 {
-    W_DC(WInputDevice);
-    if (d->handle() && d->handle()->handle() && d->handle()->is_libinput()) {
-        if (auto libinputDevice = wlr_libinput_get_device_handle(d->handle()->handle())) {
+    if (d->handle) {
+        if (auto libinputDevice = wlr_libinput_get_device_handle(d->handle)) {
             if (auto udevDevice = libinput_device_get_udev_device(libinputDevice)) {
                 auto deviceGuard = qScopeGuard([udevDevice] { udev_device_unref(udevDevice); });
 
@@ -228,17 +153,11 @@ QString WInputDevice::devicePath() const
             }
         }
     }
-    QString deviceName = name();
-    QString procPhysPath = DeviceInfoParser::instance().getPhysicalPath(deviceName);
-    if (!procPhysPath.isEmpty()) {
-        return procPhysPath;
-    }
     return QString();
 }
 
 void WInputDevice::setExclusiveGrabber(QObject *grabber)
 {
-    W_D(WInputDevice);
     auto pointerDevice = qobject_cast<QPointingDevice*>(d->qtDevice);
     if (!pointerDevice) {
         qCDebug(waylibInput) << "Cannot set exclusive grabber: device is not a pointing device";
@@ -250,14 +169,13 @@ void WInputDevice::setExclusiveGrabber(QObject *grabber)
         return;
     }
     auto firstPoint = dd->activePoints.values().first();
-    qCDebug(waylibInput) << "Setting exclusive grabber" << grabber 
-                         << "for device:" << QString::fromUtf8(d->nativeHandle()->name);
+    qCDebug(waylibInput) << "Setting exclusive grabber" << grabber
+                         << "for device:" << QString::fromUtf8(handle()->name);
     dd->setExclusiveGrabber(nullptr, firstPoint.eventPoint, grabber);
 }
 
 QObject *WInputDevice::exclusiveGrabber() const
 {
-    W_DC(WInputDevice);
     auto pointerDevice = qobject_cast<QPointingDevice*>(d->qtDevice);
     if (!pointerDevice)
         return nullptr;
@@ -267,14 +185,19 @@ QObject *WInputDevice::exclusiveGrabber() const
 
 QObject *WInputDevice::hoverTarget() const
 {
-    W_DC(WInputDevice);
     return d->hoverTarget;
 }
 
 void WInputDevice::setHoverTarget(QObject *object)
 {
-    W_D(WInputDevice);
     d->hoverTarget = object;
+}
+
+void WInputDevicePrivate::onDestroyCallback(wl_listener *listener, void *data)
+{
+    WInputDevicePrivate *d =
+        containerOf(listener, &WInputDevicePrivate::destroyListener);
+    Q_EMIT d->q->handleDestroyed(d->q);
 }
 
 WAYLIB_SERVER_END_NAMESPACE

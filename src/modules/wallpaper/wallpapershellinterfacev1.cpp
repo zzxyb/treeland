@@ -163,7 +163,7 @@ TreelandWallpaperSurfaceInterfaceV1::~TreelandWallpaperSurfaceInterfaceV1() = de
 
 WSurface *TreelandWallpaperSurfaceInterfaceV1::wSurface() const
 {
-    return WSurface::fromHandle(qw_surface::from(wlr_surface_from_resource(d->surfaceResource)));
+    return WSurface::fromHandle(wlr_surface_from_resource(d->surfaceResource));
 }
 
 QString TreelandWallpaperSurfaceInterfaceV1::source() const

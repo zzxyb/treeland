@@ -3,15 +3,27 @@
 
 #pragma once
 
+extern "C" {
+#include <wlr/types/wlr_input_device.h>
+#include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_tablet_pad.h>
+#include <wlr/types/wlr_tablet_tool.h>
+#include <wlr/types/wlr_touch.h>
+#include <wlr/types/wlr_switch.h>
+
+#define static
+#include <wlr/backend/drm.h>
+#undef static
+#include <wlr/backend/wayland.h>
+#ifdef WLR_HAVE_X11_BACKEND
+#include <wlr/backend/x11.h>
+#endif
+#include <wlr/backend/libinput.h>
+}
+
 #include <wglobal.h>
 #include <QObject>
-#include <qwglobal.h>
-#include <QMap>
-#include <QMutex>
-
-QW_BEGIN_NAMESPACE
-class qw_input_device;
-QW_END_NAMESPACE
 
 QT_BEGIN_NAMESPACE
 class QInputDevice;
@@ -22,34 +34,9 @@ WAYLIB_SERVER_BEGIN_NAMESPACE
 
 class WSeat;
 class WInputDevicePrivate;
-
-// Internal helper for parsing /proc/bus/input/devices
-struct ProcDeviceInfo {
-    QString name;
-    QString physPath;
-
-    bool isValid() const {
-        return !name.isEmpty() && !physPath.isEmpty();
-    }
-};
-
-class DeviceInfoParser {
-public:
-    static DeviceInfoParser& instance();
-
-    QString getPhysicalPath(const QString& deviceName);
-
-private:
-    DeviceInfoParser() = default;
-    void refreshDeviceInfo();
-    void parseDeviceBlock(const QString& block);
-
-    QMap<QString, ProcDeviceInfo> m_deviceMap;
-    QMutex m_mutex;
-};
-class WAYLIB_SERVER_EXPORT WInputDevice : public WWrapObject
+class WAYLIB_SERVER_EXPORT WInputDevice : public QObject
 {
-    W_DECLARE_PRIVATE(WInputDevice)
+    Q_OBJECT
 public:
     enum class Type {
         Unknow,
@@ -62,11 +49,11 @@ public:
     };
     Q_ENUM(Type)
 
-    WInputDevice(QW_NAMESPACE::qw_input_device *handle);
+    WInputDevice(wlr_input_device *handle);
+    ~WInputDevice() override;
+    wlr_input_device *handle() const;
 
-    QW_NAMESPACE::qw_input_device *handle() const;
-
-    static WInputDevice *fromHandle(const QW_NAMESPACE::qw_input_device *handle);
+    static WInputDevice *fromHandle(wlr_input_device *handle);
 
     template<class QInputDevice>
     inline QInputDevice *qtDevice() const {
@@ -92,6 +79,11 @@ private:
 
     QObject *hoverTarget() const;
     void setHoverTarget(QObject *object);
+    void handleDestroyed(WInputDevice * = nullptr);
+
+private:
+    friend class WInputDevicePrivate;
+    std::unique_ptr<WInputDevicePrivate> d;
 };
 
 WAYLIB_SERVER_END_NAMESPACE

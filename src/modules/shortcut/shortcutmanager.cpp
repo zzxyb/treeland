@@ -384,7 +384,7 @@ ShortcutManagerV2::~ShortcutManagerV2() = default;
 
 void ShortcutManagerV2::create(WServer *server)
 {
-    d->init(server->handle()->handle(), TREELAND_SHORTCUT_MANAGER_V2_VERSION);
+    d->init(server->handle(), TREELAND_SHORTCUT_MANAGER_V2_VERSION);
 }
 
 void ShortcutManagerV2::destroy(WServer *server)

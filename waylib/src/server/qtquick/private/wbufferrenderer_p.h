@@ -129,7 +129,7 @@ private:
     int indexOfSource(QQuickItem *item);
     QSGRenderer *ensureRenderer(int sourceIndex, QSGRenderContext *rc);
 
-    QW_NAMESPACE::qw_swapchain *m_swapchain = nullptr;
+    wlr_swapchain *m_swapchain = nullptr;
     WRenderHelper *m_renderHelper = nullptr;
     QPointer<QW_NAMESPACE::qw_buffer> m_lastBuffer;
 

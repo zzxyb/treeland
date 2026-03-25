@@ -105,7 +105,7 @@ bool DDMInterfaceV1::isConnected() const {
 void DDMInterfaceV1::create(WServer *server) {
     auto ddm = new treeland_ddm { .resource = nullptr };
     m_handle = ddm;
-    m_global = wl_global_create(server->handle()->handle(), &treeland_ddm_v1_interface,
+    m_global = wl_global_create(server->handle(), &treeland_ddm_v1_interface,
                                 treeland_ddm_v1_interface.version, ddm, handleBindingGlobal);
 }
 

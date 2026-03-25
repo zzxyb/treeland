@@ -6,6 +6,8 @@
 #include "modules/personalization/impl/appearance_impl.h"
 #include "modules/personalization/impl/font_impl.h"
 
+#include <qwdisplay.h>
+
 #include <cassert>
 
 extern "C" {
@@ -605,12 +607,12 @@ treeland_personalization_manager_v1::~treeland_personalization_manager_v1()
 }
 
 treeland_personalization_manager_v1 *treeland_personalization_manager_v1::create(
-    qw_display *display)
+    wl_display *display)
 {
     auto *manager = new treeland_personalization_manager_v1;
 
-    manager->event_loop = wl_display_get_event_loop(display->handle());
-    manager->global = wl_global_create(display->handle(),
+    manager->event_loop = wl_display_get_event_loop(display);
+    manager->global = wl_global_create(display,
                                        &treeland_personalization_manager_v1_interface,
                                        TREELAND_PERSONALIZATION_MANAGEMENT_V1_VERSION,
                                        manager,
@@ -620,7 +622,7 @@ treeland_personalization_manager_v1 *treeland_personalization_manager_v1::create
         return nullptr;
     }
 
-    connect(display, &qw_display::before_destroy, manager, [manager]() {
+    connect(qw_display::get(display), &qw_display::before_destroy, manager, [manager]() {
         delete manager;
     });
 

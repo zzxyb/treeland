@@ -234,7 +234,7 @@ OutputManagerV1::~OutputManagerV1()
 
 void OutputManagerV1::create(WServer *server)
 {
-    d->init(server->handle()->handle(), TREELAND_OUTPUT_MANAGER_V1_VERSION);
+    d->init(server->handle(), TREELAND_OUTPUT_MANAGER_V1_VERSION);
 }
 
 void OutputManagerV1::destroy([[maybe_unused]] WServer *server)

@@ -7,48 +7,27 @@
 #include "winputdevice.h"
 #include "platformplugin/qwlrootsintegration.h"
 #include "platformplugin/qwlrootscreen.h"
-#include "private/wglobal_p.h"
-
-#include <qwbackend.h>
-#include <qwdisplay.h>
-#include <qwoutput.h>
-#include <qwinputdevice.h>
-#include <qwsession.h>
+#include "wcontainerof.h"
 
 #include <QDebug>
 
-QW_USE_NAMESPACE
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
-class Q_DECL_HIDDEN WBackendPrivate : public WObjectPrivate
+class Q_DECL_HIDDEN WBackendPrivate
 {
 public:
     WBackendPrivate(WBackend *qq)
-        : WObjectPrivate(qq)
+        : q(qq)
     {
-
     }
 
-    inline qw_backend *handle() const {
-        return q_func()->nativeInterface<qw_backend>();
-    }
-
-    inline wlr_backend *nativeHandle() const {
-        Q_ASSERT(handle());
-        return handle()->handle();
-    }
-
-    // begin slot function
-    void on_new_output(wlr_output *output);
-    void on_new_input(wlr_input_device *device);
-    void on_input_destroy(qw_input_device *data);
-    void on_output_destroy(qw_output *output);
-    // end slot function
+    static void onNewOutputCallback(wl_listener *listener, void *data);
+    static void onNewInputCallback(wl_listener *listener, void *data);
+    // static void onInputDestroyCallback(wl_listener *listener, void *data);
 
     void connect();
 
-    W_DECLARE_PUBLIC(WBackend)
-
+    WBackend *q = nullptr;;
     QList<WOutput*> outputList;
     QList<WInputDevice*> inputList;
 
@@ -63,201 +42,160 @@ public:
         wl_listener key;
     };
 
-private:
-    qw_session *session = nullptr;
+    wlr_session *session = nullptr;
+    wlr_backend *handle = nullptr;
+
+    wl_listener newOutputListener;
+    wl_listener newInputListener;
+    // wl_listener inputDestoryListener;
 };
 
-void WBackendPrivate::on_new_output(wlr_output *output)
+void WBackendPrivate::onNewOutputCallback(wl_listener *listener, void *data)
 {
-    W_Q(WBackend);
-    auto qoutput = qw_output::from(output);
-    auto woutput = new WOutput(qoutput, q);
+    WBackendPrivate *d =
+        containerOf(listener, &WBackendPrivate::newOutputListener);
+    wlr_output *output = static_cast<wlr_output *>(data);
+    auto woutput = new WOutput(output, d->q);
 
-    outputList << woutput;
+    d->outputList << woutput;
     QWlrootsIntegration::instance()->addScreen(woutput);
 
-    woutput->safeConnect(&qw_output::before_destroy, q, [this, qoutput] {
-        on_output_destroy(qoutput);
-    });
+    QObject::connect(woutput, &WOutput::handleDestroyed,
+                     d->q, &WBackend::onOutputDestroyed, Qt::SingleShotConnection);
 
-    Q_EMIT q->outputAdded(woutput);
+    Q_EMIT d->q->outputAdded(woutput);
 }
 
-void WBackendPrivate::on_new_input(wlr_input_device *device)
+void WBackendPrivate::onNewInputCallback(wl_listener *listener, void *data)
 {
-    W_Q(WBackend);
-    auto qinput_device = qw_input_device::from(device);
-    auto winput_device = new WInputDevice(qinput_device);
-    inputList << winput_device;
-    winput_device->safeConnect(&qw_input_device::before_destroy, q, [this, qinput_device] {
-        on_input_destroy(qinput_device);
-    });
+    WBackendPrivate *d =
+        containerOf(listener, &WBackendPrivate::newInputListener);
+    // W_Q(WBackend);
+    // auto qinput_device = qw_input_device::from(device);
+    // auto winput_device = new WInputDevice(qinput_device);
+    // inputList << winput_device;
+    // winput_device->safeConnect(&qw_input_device::before_destroy, q, [this, qinput_device] {
+    //     on_input_destroy(qinput_device);
+    // });
 
-    Q_EMIT q->inputAdded(winput_device);
+    // Q_EMIT q->inputAdded(winput_device);
 }
 
-void WBackendPrivate::on_input_destroy(qw_input_device *data)
-{
-    for (int i = 0; i < inputList.count(); ++i) {
-        if (inputList.at(i)->handle() == data) {
-            auto device = inputList.takeAt(i);
+// void WBackendPrivate::onInputDestroyCallback(wl_listener *listener, void *data)
+// {
+//     WBackendPrivate *d =
+//         containerOf(listener, &WBackendPrivate::inputDestoryListener);
+//     for (int i = 0; i < d->inputList.count(); ++i) {
+//         if (d->inputList.at(i)->handle() == data) {
+//             auto device = d->inputList.takeAt(i);
 
-            W_Q(WBackend);
-            Q_EMIT q->inputRemoved(device);
-            device->safeDeleteLater();
-            return;
-        }
-    }
-}
-
-void WBackendPrivate::on_output_destroy(qw_output *output)
-{
-    for (int i = 0; i < outputList.count(); ++i) {
-        if (outputList.at(i)->handle() == output) {
-            auto woutput = outputList.takeAt(i);
-
-            W_Q(WBackend);
-            Q_EMIT q->outputRemoved(woutput);
-            QWlrootsIntegration::instance()->removeScreen(woutput);
-            woutput->safeDeleteLater();
-            return;
-        }
-    }
-}
+//             Q_EMIT d->q->inputRemoved(device);
+//             device->safeDeleteLater();
+//             return;
+//         }
+//     }
+// }
 
 void WBackendPrivate::connect()
 {
-    QObject::connect(handle(), &qw_backend::notify_new_output, q_func(), [this] (wlr_output *output) {
-        on_new_output(output);
-    });
-    QObject::connect(handle(), &qw_backend::notify_new_input, q_func(), [this] (wlr_input_device *device) {
-        on_new_input(device);
-    });
+    newOutputListener.notify = onNewOutputCallback;
+    wl_signal_add(&handle->events.new_output, &newOutputListener);
+
+    newInputListener.notify = onNewInputCallback;
+    wl_signal_add(&handle->events.new_input, &newInputListener);
 }
 
-WBackend::WBackend()
-    : WObject(*new WBackendPrivate(this))
+WBackend::WBackend(WServer *server, QObject *parent)
+    : QObject(parent)
+    , d(new WBackendPrivate(this))
 {
+    if (!d->handle) {
+        d->handle = wlr_backend_autocreate(server->eventLoop(), &d->session);
+        Q_ASSERT(d->handle);
 
+        d->connect();
+    }
 }
 
-qw_backend *WBackend::handle() const
+WBackend::~WBackend()
 {
-    return nativeInterface<qw_backend>();
+    qDeleteAll(d->inputList);
+    qDeleteAll(d->outputList);
+    d->inputList.clear();
+    d->outputList.clear();
+    wl_list_remove(&d->newOutputListener.link);
+    wl_list_remove(&d->newInputListener.link);
+    wlr_backend_destroy(d->handle);
 }
 
-qw_session *WBackend::session() const
+wlr_backend *WBackend::handle() const
 {
-    W_DC(WBackend);
+    return d->handle;
+}
+
+wlr_session *WBackend::session() const
+{
     return d->session;
 }
 
 QList<WOutput*> WBackend::outputList() const
 {
-    W_DC(WBackend);
     return d->outputList;
 }
 
 QList<WInputDevice *> WBackend::inputDeviceList() const
 {
-    W_DC(WBackend);
     return d->inputList;
 }
 
-template<class T>
-static bool hasBackend(qw_backend *handle)
+bool WBackend::isDrm() const
 {
-    if (qobject_cast<T*>(handle))
-        return true;
-    if (auto multiBackend = qobject_cast<qw_multi_backend*>(handle)) {
-        bool exists = false;
-        multiBackend->for_each_backend([] (wlr_backend *backend, void *userData) {
-            bool &exists = *reinterpret_cast<bool*>(userData);
-            if (T::from(backend))
-                exists = true;
-        }, &exists);
-
-        return exists;
-    }
-
-    return false;
+    return wlr_backend_is_drm(d->handle);
 }
 
-bool WBackend::hasDrm() const
+bool WBackend::isX11() const
 {
-    return hasBackend<qw_drm_backend>(handle());
+    return wlr_backend_is_x11(d->handle);
 }
 
-bool WBackend::hasX11() const
+bool WBackend::isWayland() const
 {
-    return hasBackend<qw_x11_backend>(handle());
-}
-
-bool WBackend::hasWayland() const
-{
-    return hasBackend<qw_wayland_backend>(handle());
+    return wlr_backend_is_wl(d->handle);
 }
 
 bool WBackend::isSessionActive() const
 {
-    W_D(const WBackend);
-    return d->session && d->session->handle()->active;
+    return d->session && d->session->active;
 }
 
 void WBackend::activateSession()
 {
-    W_D(WBackend);
     if (d->session) {
-        struct wlr_session *session = d->session->handle();
-        session->active = true;
-        wl_signal_emit_mutable(&session->events.active, nullptr);
+        d->session->active = true;
+        wl_signal_emit_mutable(&d->session->events.active, nullptr);
     }
 }
 
 void WBackend::deactivateSession()
 {
-    W_D(WBackend);
     if (d->session) {
-        struct wlr_session *session = d->session->handle();
-        session->active = false;
-        wl_signal_emit_mutable(&session->events.active, nullptr);
+        d->session->active = false;
+        wl_signal_emit_mutable(&d->session->events.active, nullptr);
     }
 }
 
-void WBackend::create(WServer *server)
+void WBackend::onOutputDestroyed(WOutput *output)
 {
-    W_D(WBackend);
+    for (int i = 0; i < d->outputList.count(); ++i) {
+        if (d->outputList.at(i) == output) {
+            auto woutput = d->outputList.takeAt(i);
+            Q_EMIT d->q->outputRemoved(woutput);
+            QWlrootsIntegration::instance()->removeScreen(woutput);
+            delete woutput;
 
-    if (!m_handle) {
-        wlr_session *session = nullptr;
-        m_handle = qw_backend::autocreate(server->handle()->get_event_loop(), &session);
-        Q_ASSERT(m_handle);
-        d->session = qw_session::from(session);
-        Q_EMIT created();
+            return;
+        }
     }
-
-    d->connect();
-}
-
-void WBackend::destroy([[maybe_unused]] WServer *server)
-{
-    W_D(WBackend);
-
-    qDeleteAll(d->inputList);
-    qDeleteAll(d->outputList);
-    d->inputList.clear();
-    d->outputList.clear();
-    m_handle = nullptr;
-}
-
-wl_global *WBackend::global() const
-{
-    return nullptr;
-}
-
-QByteArrayView WBackend::interfaceName() const
-{
-    return {};
 }
 
 WAYLIB_SERVER_END_NAMESPACE

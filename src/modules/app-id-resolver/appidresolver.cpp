@@ -182,7 +182,7 @@ bool AppIdResolverManager::resolvePidfd(int pidfd, std::function<void(const QStr
 
 void AppIdResolverManager::create(WServer *server)
 {
-    d->init(*server->handle(), TREELAND_APP_ID_RESOLVER_MANAGER_V1_VERSION);
+    d->init(server->handle(), TREELAND_APP_ID_RESOLVER_MANAGER_V1_VERSION);
     qCDebug(treelandAppIdResolver) << "AppIdResolverManager global created";
 }
 

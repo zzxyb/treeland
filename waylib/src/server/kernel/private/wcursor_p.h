@@ -6,15 +6,15 @@
 #include "wcursor.h"
 #include "private/wglobal_p.h"
 
-#include <qwcursor.h>
+extern "C" {
+#define static
+#include <wlr/types/wlr_cursor.h>
+#undef static
+}
 
+#include <qwxcursormanager.h>
 #include <QCursor>
 #include <QPointer>
-
-QW_BEGIN_NAMESPACE
-class qw_pointer;
-class qw_surface;
-QW_END_NAMESPACE
 
 struct wlr_pointer_motion_event;
 struct wlr_pointer_motion_absolute_event;
@@ -28,7 +28,6 @@ struct wlr_pointer_pinch_update_event;
 struct wlr_pointer_pinch_end_event;
 struct wlr_pointer_hold_begin_event;
 struct wlr_pointer_hold_end_event;
-struct wlr_cursor;
 struct wlr_touch_down_event;
 struct wlr_touch_up_event;
 struct wlr_touch_motion_event;
@@ -42,7 +41,8 @@ public:
     WCursorPrivate(WCursor *qq);
     ~WCursorPrivate();
 
-    WWRAP_HANDLE_FUNCTIONS(QW_NAMESPACE::qw_cursor, wlr_cursor)
+    inline wlr_cursor *handle() const { return m_nativeHandle; }
+    inline wlr_cursor *nativeHandle() const { return m_nativeHandle; }
 
     void instantRelease() override;
 
@@ -71,9 +71,12 @@ public:
     // end slot function
 
     void connect();
-    void processCursorMotion(QW_NAMESPACE::qw_pointer *device, uint32_t time);
+    void processCursorMotion(wlr_pointer *pointer, uint32_t time);
 
     W_DECLARE_PUBLIC(WCursor)
+
+    wlr_cursor *m_nativeHandle = nullptr;
+    struct CursorListeners *cursorListeners = nullptr;
 
     QW_NAMESPACE::qw_xcursor_manager *xcursor_manager = nullptr;
     QCursor cursor;

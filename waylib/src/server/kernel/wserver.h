@@ -4,7 +4,6 @@
 #pragma once
 
 #include <wglobal.h>
-#include <qwglobal.h>
 
 #include <QDeadlineTimer>
 #include <QFuture>
@@ -14,11 +13,9 @@ QT_BEGIN_NAMESPACE
 class QProcess;
 QT_END_NAMESPACE
 
-QW_BEGIN_NAMESPACE
-class qw_display;
-QW_END_NAMESPACE
-
 struct wl_global;
+struct wl_display;
+struct wl_event_loop;
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
@@ -86,7 +83,8 @@ public:
     explicit WServer(QObject *parent = nullptr);
     ~WServer();
 
-    QW_NAMESPACE::qw_display *handle() const;
+    wl_display *handle() const;
+    wl_event_loop *eventLoop() const;
 
     void attach(WServerInterface *interface);
     template<typename Interface, typename... Args>

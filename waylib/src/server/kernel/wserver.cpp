@@ -194,10 +194,16 @@ WServer::WServer(WServerPrivate &dd, QObject *parent)
 {
 }
 
-qw_display *WServer::handle() const
+wl_display *WServer::handle() const
 {
     W_DC(WServer);
-    return d->display.get();
+    return d->display->handle();
+}
+
+wl_event_loop *WServer::eventLoop() const
+{
+    W_DC(WServer);
+    return wl_display_get_event_loop(d->display->handle());
 }
 
 void WServer::stop()

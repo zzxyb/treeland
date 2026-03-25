@@ -7,18 +7,15 @@
 #include <WServer>
 #include <limits.h>
 
-QW_BEGIN_NAMESPACE
-class qw_output_layout;
-QW_END_NAMESPACE
+struct wlr_output_layout;
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 class WOutput;
 class WOutputLayoutPrivate;
-class WAYLIB_SERVER_EXPORT WOutputLayout : public WWrapObject
+class WAYLIB_SERVER_EXPORT WOutputLayout : public QObject
 {
     Q_OBJECT
-    W_DECLARE_PRIVATE(WOutputLayout)
     Q_PROPERTY(int implicitWidth READ implicitWidth NOTIFY implicitWidthChanged)
     Q_PROPERTY(int implicitHeight READ implicitHeight NOTIFY implicitHeightChanged)
 
@@ -32,9 +29,10 @@ public:
     };
     Q_ENUM(Layer)
 
-    explicit WOutputLayout(WServer *server);
+    explicit WOutputLayout(WServer *server, QObject *parent = nullptr);
+    ~WOutputLayout() override;
 
-    qw_output_layout *handle() const;
+    wlr_output_layout *handle() const;
 
     const QList<WOutput *> &outputs() const;
 
@@ -55,9 +53,12 @@ Q_SIGNALS:
     void implicitWidthChanged();
     void implicitHeightChanged();
 
+private:
+    friend class WOutputLayoutPrivate;
+
 protected:
-    WOutputLayout(WOutputLayoutPrivate &dd, WServer *server);
-    ~WOutputLayout() override = default;
+    explicit WOutputLayout(WOutputLayoutPrivate *dd, WServer *server, QObject *parent = nullptr);
+    std::unique_ptr<WOutputLayoutPrivate> d;
 };
 
 WAYLIB_SERVER_END_NAMESPACE

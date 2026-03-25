@@ -174,7 +174,7 @@ void handle_manager_get_text_input(wl_client *client,
     }
     text_input->d_func()->resource = text_input_resource;
     auto wClient = WClient::get(client);
-    auto wSeat = WSeat::fromHandle(qw_seat::from(seat_client->seat));
+    auto wSeat = WSeat::fromHandle(seat_client->seat);
     Q_ASSERT(wClient);
     Q_ASSERT(wSeat);
     text_input->d_func()->client = wClient;
@@ -315,7 +315,7 @@ QByteArrayView WTextInputManagerV2::interfaceName() const
 
 void WTextInputManagerV2::create(WServer *server)
 {
-    m_global = wl_global_create(server->handle()->handle(), &zwp_text_input_manager_v2_interface, 1, this, text_input_manager_bind);
+    m_global = wl_global_create(server->handle(), &zwp_text_input_manager_v2_interface, 1, this, text_input_manager_bind);
     Q_ASSERT(m_global);
     m_handle = this;
 }

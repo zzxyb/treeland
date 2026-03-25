@@ -5,28 +5,22 @@
 
 #include <wglobal.h>
 #include <wtypes.h>
-#include <qwglobal.h>
 
 #include <QObject>
 #include <QRect>
 #include <QQmlEngine>
 
 struct wlr_surface;
+struct wlr_buffer;
 
-QW_BEGIN_NAMESPACE
-class qw_texture;
-class qw_surface;
-class qw_buffer;
-QW_END_NAMESPACE
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 class WServer;
 class WOutput;
 class WSurfacePrivate;
-class WAYLIB_SERVER_EXPORT WSurface : public WWrapObject
+class WAYLIB_SERVER_EXPORT WSurface : public QObject
 {
     Q_OBJECT
-    W_DECLARE_PRIVATE(WSurface)
     Q_PROPERTY(bool mapped READ mapped NOTIFY mappedChanged)
     Q_PROPERTY(bool isSubsurface READ isSubsurface NOTIFY isSubsurfaceChanged)
     Q_PROPERTY(bool hasSubsurface READ hasSubsurface NOTIFY hasSubsurfaceChanged)
@@ -37,11 +31,12 @@ class WAYLIB_SERVER_EXPORT WSurface : public WWrapObject
     QML_UNCREATABLE("Only create in C++")
 
 public:
-    explicit WSurface(QW_NAMESPACE::qw_surface *handle, QObject *parent = nullptr);
+    explicit WSurface(wlr_surface *handle, QObject *parent = nullptr);
+    ~WSurface() override;
 
-    QW_NAMESPACE::qw_surface *handle() const;
+    wlr_surface *handle() const;
+    wlr_buffer *buffer() const;
 
-    static WSurface *fromHandle(QW_NAMESPACE::qw_surface *handle);
     static WSurface *fromHandle(wlr_surface *handle);
 
     // for current state
@@ -51,7 +46,6 @@ public:
     WLR::Transform orientation() const;
     int bufferScale() const;
     QPoint bufferOffset() const;
-    QW_NAMESPACE::qw_buffer *buffer() const;
 
     void notifyFrameDone();
 
@@ -66,12 +60,13 @@ public:
     bool needsFrame() const;
     bool scheduleFrameIfNeeded();
 
+    bool inputRegionContains(const QPointF &localPos) const;
+
 public Q_SLOTS:
     void enterOutput(WOutput *output);
     void leaveOutput(WOutput *output);
     const QList<WOutput *> &outputs() const;
     WOutput *framePacingOutput() const;
-    bool inputRegionContains(const QPointF &localPos) const;
 
     void map();
     void unmap();
@@ -86,9 +81,11 @@ Q_SIGNALS:
     void outputEntered(WOutput *output);
     void outputLeave(WOutput *output);
     void commit(quint32 committedState /*wlr_surface_state_field*/);
+    void handleDestroyed(WSurface *surface);
 
-protected:
-    WSurface(WSurfacePrivate &dd, QObject *parent);
+private:
+    friend class WSurfacePrivate;
+    std::unique_ptr<WSurfacePrivate> d;
 };
 
 WAYLIB_SERVER_END_NAMESPACE

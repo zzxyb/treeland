@@ -73,7 +73,7 @@ void DDEShellManagerInterfaceV1Private::set_xwindow_position_relative(Resource *
                                                                       wl_fixed_t dx,
                                                                       wl_fixed_t dy)
 {
-    WSurface *wsurface = WSurface::fromHandle(qw_surface::from_resource(anchor));
+    WSurface *wsurface = WSurface::fromHandle(wlr_surface_from_resource(anchor));
     uint32_t ok = (wsurface && Helper::instance()->setXWindowPositionRelative(wid, wsurface, dx, dy)) ? 0 : 1;
     wl_resource *cb = wl_resource_create(resource->client(), &wl_callback_interface, 1, callback);
     wl_callback_send_done(cb, ok);
@@ -417,7 +417,7 @@ DDEShellSurfaceInterface::~DDEShellSurfaceInterface() = default;
 
 WSurface *DDEShellSurfaceInterface::wSurface() const
 {
-    return WSurface::fromHandle(qw_surface::from(wlr_surface_from_resource(d->surfaceResource)));
+    return WSurface::fromHandle(wlr_surface_from_resource(d->surfaceResource));
 }
 
 bool DDEShellSurfaceInterface::ddeShellSurfaceIsMappedToWsurface(const WSurface *surface)
@@ -524,7 +524,7 @@ WSeat *DDEActiveInterface::seat() const
 {
     auto wlrSeat =
         static_cast<struct wlr_seat_client *>(wl_resource_get_user_data(d->seatResouce))->seat;
-    return WSeat::fromHandle(qw_seat::from(wlrSeat));
+    return WSeat::fromHandle(wlrSeat);
 }
 
 void DDEActiveInterface::sendActiveIn(uint32_t reason)

@@ -8,8 +8,6 @@
 
 #include <wayland-server-core.h>
 
-#include <qwdisplay.h>
-
 #include <QObject>
 #include <QStringList>
 #include <QSize>
@@ -34,7 +32,7 @@ public:
     wl_global *global = nullptr;
     wl_list resources; // wl_resource_get_link()
 
-    static treeland_personalization_manager_v1 *create(QW_NAMESPACE::qw_display *display);
+    static treeland_personalization_manager_v1 *create(wl_display *display);
 
 Q_SIGNALS:
     void before_destroy();

@@ -217,7 +217,7 @@ WSurface *TreelandWallpaperInterfaceV1::referenceWSurface() const
         return nullptr;
     }
 
-    return WSurface::fromHandle(qw_surface::from(wlr_surface_from_resource(d->refSurfaceResource)));
+    return WSurface::fromHandle(wlr_surface_from_resource(d->refSurfaceResource));
 }
 
 QString TreelandWallpaperInterfaceV1::userName() const

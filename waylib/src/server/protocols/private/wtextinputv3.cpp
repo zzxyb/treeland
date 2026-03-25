@@ -44,15 +44,15 @@ QByteArrayView WTextInputManagerV3::interfaceName() const
 void WTextInputManagerV3::create(WServer *server)
 {
     W_D(WTextInputManagerV3);
-    auto manager = qw_text_input_manager_v3::create(*server->handle());
+    auto manager = qw_text_input_manager_v3::create(server->handle());
     Q_ASSERT(manager);
     m_handle = manager;
     connect(manager, &qw_text_input_manager_v3::notify_text_input, this, [this, d](wlr_text_input_v3 *w_text_input_v3){
-        auto text_input_v3 = qw_text_input_v3::from(w_text_input_v3);
-        auto ti = new WTextInputV3(text_input_v3, this);
+        auto qwHandle = qw_text_input_v3::from(w_text_input_v3);
+        auto ti = new WTextInputV3(w_text_input_v3, this);
         d->textInputs.append(ti);
         Q_EMIT this->newTextInput(ti);
-        connect(text_input_v3, &qw_text_input_v3::before_destroy, ti, [ti, d]{
+        connect(qwHandle, &qw_text_input_v3::before_destroy, ti, [ti, d]{
             Q_EMIT ti->entityAboutToDestroy();
             d->textInputs.removeOne(ti);
             ti->deleteLater();
@@ -91,99 +91,100 @@ public:
     }
 };
 
-WTextInputV3::WTextInputV3(qw_text_input_v3 *h, QObject *parent)
-    : WTextInput(*new WTextInputV3Private(h, this), parent)
+WTextInputV3::WTextInputV3(wlr_text_input_v3 *h, QObject *parent)
+    : WTextInput(*new WTextInputV3Private(qw_text_input_v3::from(h), this), parent)
 {
-    connect(handle(), &qw_text_input_v3::notify_enable, this, &WTextInput::enabled);
-    connect(handle(), &qw_text_input_v3::notify_disable, this, &WTextInput::disabled);
-    connect(handle(), &qw_text_input_v3::notify_commit, this, &WTextInput::committed);
+    auto qwHandle = d_func()->handle;
+    connect(qwHandle, &qw_text_input_v3::notify_enable, this, &WTextInput::enabled);
+    connect(qwHandle, &qw_text_input_v3::notify_disable, this, &WTextInput::disabled);
+    connect(qwHandle, &qw_text_input_v3::notify_commit, this, &WTextInput::committed);
 }
 
 WSeat *WTextInputV3::seat() const
 {
-    return WSeat::fromHandle(qw_seat::from(handle()->handle()->seat));
+    return WSeat::fromHandle(handle()->seat);
 }
 
 WSurface *WTextInputV3::focusedSurface() const
 {
-    return WSurface::fromHandle(handle()->handle()->focused_surface);
+    return WSurface::fromHandle(handle()->focused_surface);
 }
 
 QString WTextInputV3::surroundingText() const
 {
-    return handle()->handle()->current.surrounding.text;
+    return handle()->current.surrounding.text;
 }
 
 int WTextInputV3::surroundingCursor() const
 {
-    return handle()->handle()->current.surrounding.cursor;
+    return handle()->current.surrounding.cursor;
 }
 
 int WTextInputV3::surroundingAnchor() const
 {
-    return handle()->handle()->current.surrounding.anchor;
+    return handle()->current.surrounding.anchor;
 }
 
 IME::ChangeCause WTextInputV3::textChangeCause() const
 {
-    return IME::ChangeCause(handle()->handle()->current.text_change_cause);
+    return IME::ChangeCause(handle()->current.text_change_cause);
 }
 
 IME::ContentHints WTextInputV3::contentHints() const
 {
-    return IME::ContentHints(handle()->handle()->current.content_type.hint);
+    return IME::ContentHints(handle()->current.content_type.hint);
 }
 
 IME::ContentPurpose WTextInputV3::contentPurpose() const
 {
-    return IME::ContentPurpose(handle()->handle()->current.content_type.purpose);
+    return IME::ContentPurpose(handle()->current.content_type.purpose);
 }
 
 QRect WTextInputV3::cursorRect() const
 {
-    return WTools::fromWLRBox(&handle()->handle()->current.cursor_rectangle);
+    return WTools::fromWLRBox(&handle()->current.cursor_rectangle);
 }
 
 IME::Features WTextInputV3::features() const
 {
-    return IME::Features(handle()->handle()->current.features);
+    return IME::Features(handle()->current.features);
 }
 
-qw_text_input_v3 *WTextInputV3::handle() const
+wlr_text_input_v3 *WTextInputV3::handle() const
 {
-    return d_func()->handle;
+    return d_func()->handle->handle();
 }
 
 void WTextInputV3::sendEnter(WSurface *surface)
 {
-    handle()->send_enter(surface->handle()->handle());
+    d_func()->handle->send_enter(surface->handle());
 }
 
 void WTextInputV3::sendLeave()
 {
     if (focusedSurface()) {
-        handle()->send_leave();
+        d_func()->handle->send_leave();
     }
 }
 
 void WTextInputV3::sendPreeditString(const QString &text, qint32 cursor_begin, qint32 cursor_end)
 {
-    handle()->send_preedit_string(qPrintable(text), cursor_begin, cursor_end);
+    d_func()->handle->send_preedit_string(qPrintable(text), cursor_begin, cursor_end);
 }
 
 void WTextInputV3::sendCommitString(const QString &text)
 {
-    handle()->send_commit_string(qPrintable(text));
+    d_func()->handle->send_commit_string(qPrintable(text));
 }
 
 void WTextInputV3::sendDeleteSurroundingText(quint32 before_length, quint32 after_length)
 {
-    handle()->send_delete_surrounding_text(before_length, after_length);
+    d_func()->handle->send_delete_surrounding_text(before_length, after_length);
 }
 
 void WTextInputV3::sendDone()
 {
-    handle()->send_done();
+    d_func()->handle->send_done();
 }
 
 void WTextInputV3::handleIMCommitted(WInputMethodV2 *im)

@@ -7,12 +7,8 @@
 #include "woutput.h"
 #include "woutputlayout.h"
 
-#include <qwoutput.h>
-#include <qwoutputlayout.h>
-
 #include <QQuickWindow>
 
-QW_USE_NAMESPACE
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 class Q_DECL_HIDDEN WQuickOutputLayoutPrivate : public WOutputLayoutPrivate
@@ -20,39 +16,35 @@ class Q_DECL_HIDDEN WQuickOutputLayoutPrivate : public WOutputLayoutPrivate
 public:
     WQuickOutputLayoutPrivate(WQuickOutputLayout *qq)
         : WOutputLayoutPrivate(qq)
-    {
+    {}
 
-    }
+    WQuickOutputLayout *q() const { return static_cast<WQuickOutputLayout*>(WOutputLayoutPrivate::q); }
 
-    W_DECLARE_PUBLIC(WQuickOutputLayout)
-
-    QList<WOutputItem*> outputs;
+    QList<WOutputItem*> outputItems;
 };
 
 WQuickOutputLayout::WQuickOutputLayout(WServer *server)
-    : WOutputLayout(*new WQuickOutputLayoutPrivate(this), server)
+    : WOutputLayout(new WQuickOutputLayoutPrivate(this), server)
 {
-
 }
 
 const QList<WOutputItem*> &WQuickOutputLayout::outputs() const
 {
-    W_DC(WQuickOutputLayout);
-    return d->outputs;
+    return static_cast<const WQuickOutputLayoutPrivate*>(d.get())->outputItems;
 }
 
 void WQuickOutputLayout::add(WOutputItem *output)
 {
-    W_D(WQuickOutputLayout);
-    Q_ASSERT(!d->outputs.contains(output));
-    d->outputs.append(output);
-    add(output->output(), output->globalPosition().toPoint());
+    auto *dq = static_cast<WQuickOutputLayoutPrivate*>(d.get());
+    Q_ASSERT(!dq->outputItems.contains(output));
+    dq->outputItems.append(output);
+    WOutputLayout::add(output->output(), output->globalPosition().toPoint());
 
-    auto updateOutput = [d, this] {
+    auto updateOutput = [dq, this] {
         auto *output = qobject_cast<WOutputItem*>(sender());
         if (!output) // Maybe output has destroyed but event still in queue
             return;
-        Q_ASSERT(d->outputs.contains(output));
+        Q_ASSERT(dq->outputItems.contains(output));
         move(output->output(), output->globalPosition().toPoint());
         Q_EMIT maybeLayoutChanged();
     };
@@ -67,14 +59,14 @@ void WQuickOutputLayout::add(WOutputItem *output)
 
 void WQuickOutputLayout::remove(WOutputItem *output)
 {
-    W_D(WQuickOutputLayout);
+    auto *dq = static_cast<WQuickOutputLayoutPrivate*>(d.get());
 
-    if (!d->outputs.removeOne(output))
+    if (!dq->outputItems.removeOne(output))
         return;
     output->disconnect(this);
 
     if (auto o = output->output()) {
-        remove(o);
+        WOutputLayout::remove(o);
     }
 
     Q_EMIT outputsChanged();

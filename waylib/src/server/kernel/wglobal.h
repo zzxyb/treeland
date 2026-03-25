@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <qwconfig.h>
 #include <qtguiglobal.h>
 #include <QtQmlIntegration>
 

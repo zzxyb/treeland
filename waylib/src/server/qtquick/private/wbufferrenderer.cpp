@@ -104,7 +104,7 @@ WBufferRenderer::~WBufferRenderer()
     resetSources();
 
     delete m_renderHelper;
-    delete m_swapchain;
+    wlr_swapchain_destroy(m_swapchain);
 }
 
 WOutput *WBufferRenderer::output() const
@@ -343,11 +343,12 @@ qw_buffer *WBufferRenderer::beginRender(const QSize &pixelSize, qreal devicePixe
             return nullptr;
         }
 
-        if (!m_swapchain || QSize(m_swapchain->handle()->width, m_swapchain->handle()->height) != pixelSize
-            || m_swapchain->handle()->format.format != renderFormat->format) {
+        if (!m_swapchain || QSize(m_swapchain->width, m_swapchain->height) != pixelSize
+            || m_swapchain->format.format != renderFormat->format) {
             if (m_swapchain)
-                delete m_swapchain;
-            m_swapchain = qw_swapchain::create(m_output->allocator()->handle(), pixelSize.width(), pixelSize.height(), renderFormat);
+                wlr_swapchain_destroy(m_swapchain);
+
+            m_swapchain = wlr_swapchain_create(m_output->allocator(), pixelSize.width(), pixelSize.height(), renderFormat);
         }
     } else if (flags.testFlag(RenderFlag::UseCursorFormats)) {
         bool ok = m_output->configureCursorSwapchain(pixelSize, format, &m_swapchain);
@@ -361,7 +362,7 @@ qw_buffer *WBufferRenderer::beginRender(const QSize &pixelSize, qreal devicePixe
     }
 
     // TODO: Support scanout buffer of wlr_surface(from WSurfaceItem)
-    auto wbuffer = m_swapchain->acquire();
+    auto wbuffer = wlr_swapchain_acquire(m_swapchain);
     if (!wbuffer)
         return nullptr;
     auto buffer = qw_buffer::from(wbuffer);

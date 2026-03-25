@@ -450,33 +450,33 @@ void Helper::onOutputAdded(WOutput *output)
     QSettings settings(cache_location + "/output.ini", QSettings::IniFormat);
     settings.beginGroup(QString("output.%1").arg(output->name()));
     if (settings.contains("scale") && m_mode != OutputMode::Copy) {
-        qw_output_state newState;
-        newState.set_enabled(true);
+        wlr_output_state newState;
+        wlr_output_state_init(&newState);
+        wlr_output_state_set_enabled(&newState, true);
 
         int width = settings.value("width").toInt();
         int height = settings.value("height").toInt();
         int refresh = settings.value("refresh").toInt();
 
         wlr_output_mode *mode, *configMode = nullptr;
-        wl_list_for_each(mode, &output->nativeHandle()->modes, link) {
+        wl_list_for_each(mode, &output->handle()->modes, link) {
             if (mode->width == width && mode->height == height && mode->refresh == refresh) {
                 configMode = mode;
                 break;
             }
         }
         if (configMode)
-            newState.set_mode(configMode);
+            wlr_output_state_set_mode(&newState, configMode);
         else
-            newState.set_custom_mode(width,
-                                     height,
-                                     refresh);
+            wlr_output_state_set_custom_mode(&newState, width, height, refresh);
 
-        newState.set_adaptive_sync_enabled(settings.value("adaptiveSyncEnabled").toBool());
-        newState.set_transform(static_cast<wl_output_transform>(settings.value("transform").toInt()));
-        newState.set_scale(settings.value("scale").toFloat());
-        if (!output->handle()->commit_state(newState)) {
+        wlr_output_state_set_adaptive_sync_enabled(&newState, settings.value("adaptiveSyncEnabled").toBool());
+        wlr_output_state_set_transform(&newState, static_cast<wl_output_transform>(settings.value("transform").toInt()));
+        wlr_output_state_set_scale(&newState, settings.value("scale").toFloat());
+        if (!wlr_output_commit_state(output->handle(), &newState)) {
             qCCritical(treelandCore) << "commit failed on output" << output->name();
         }
+        wlr_output_state_finish(&newState);
     }
     settings.endGroup();
     m_wallpaperManager->ensureWallpaperConfigForOutput(o);
@@ -563,7 +563,7 @@ void Helper::onSurfaceModeChanged(WSurface *surface, WXdgDecorationManager::Deco
 
 void Helper::setGamma(struct wlr_gamma_control_manager_v1_set_gamma_event *event)
 {
-    auto *qwOutput = qw_output::from(event->output);
+    wlr_output *wlrOutput = event->output;
     size_t ramp_size = 0;
     uint16_t *r = nullptr, *g = nullptr, *b = nullptr;
     wlr_gamma_control_v1 *gamma_control = event->control;
@@ -573,14 +573,16 @@ void Helper::setGamma(struct wlr_gamma_control_manager_v1_set_gamma_event *event
         g = gamma_control->table + gamma_control->ramp_size;
         b = gamma_control->table + 2 * gamma_control->ramp_size;
     }
-    qw_output_state newState;
-    newState.set_gamma_lut(ramp_size, r, g, b);
-    if (!qwOutput->commit_state(newState)) {
-        qCCritical(treelandCore, "commit failed on output  %s", qwOutput->handle()->name);
+    wlr_output_state newState;
+    wlr_output_state_init(&newState);
+    wlr_output_state_set_gamma_lut(&newState, ramp_size, r, g, b);
+    if (!wlr_output_commit_state(wlrOutput, &newState)) {
+        qCCritical(treelandCore, "commit failed on output  %s", wlrOutput->name);
         qCWarning(treelandCore) << "Failed to set gamma lut!";
         // TODO: use software impl it.
-        qw_gamma_control_v1::from(gamma_control)->send_failed_and_destroy();
+        wlr_gamma_control_v1_send_failed_and_destroy(gamma_control);
     }
+    wlr_output_state_finish(&newState);
 }
 
 void Helper::handleCopyModeOutputDisable(Output *affectedOutput)
@@ -644,20 +646,23 @@ void Helper::onOutputTestOrApply(qw_output_configuration_v1 *config, bool onlyTe
                 ok = false;
                 continue;
             }
-            qw_output_state newState;
-            newState.set_enabled(state.enabled);
+            wlr_output_state newState;
+            wlr_output_state_init(&newState);
+            wlr_output_state_set_enabled(&newState, state.enabled);
             if (state.enabled) {
                 if (state.mode)
-                    newState.set_mode(state.mode);
+                    wlr_output_state_set_mode(&newState, state.mode);
                 else
-                    newState.set_custom_mode(state.customModeSize.width(),
+                    wlr_output_state_set_custom_mode(&newState,
+                                             state.customModeSize.width(),
                                              state.customModeSize.height(),
                                              state.customModeRefresh);
-                newState.set_adaptive_sync_enabled(state.adaptiveSyncEnabled);
-                newState.set_transform(static_cast<wl_output_transform>(state.transform));
-                newState.set_scale(state.scale);
+                wlr_output_state_set_adaptive_sync_enabled(&newState, state.adaptiveSyncEnabled);
+                wlr_output_state_set_transform(&newState, static_cast<wl_output_transform>(state.transform));
+                wlr_output_state_set_scale(&newState, state.scale);
             }
-            ok &= state.output->handle()->test_state(newState);
+            ok &= wlr_output_test_state(state.output->handle(), &newState);
+            wlr_output_state_finish(&newState);
         }
 
         m_outputManager->sendResult(config, ok);
@@ -879,26 +884,28 @@ void Helper::onOutputCommitFinished(qw_output_configuration_v1 *config, bool suc
 
 void Helper::onSetOutputPowerMode(wlr_output_power_v1_set_mode_event *event)
 {
-    auto output = qw_output::from(event->output);
-    qw_output_state newState;
+    wlr_output *output = event->output;
+    wlr_output_state newState;
+    wlr_output_state_init(&newState);
+    auto finishState = qScopeGuard([&]{ wlr_output_state_finish(&newState); });
 
     switch (event->mode) {
     case ZWLR_OUTPUT_POWER_V1_MODE_OFF:
-        if (!output->handle()->enabled) {
+        if (!output->enabled) {
             return;
         }
-        newState.set_enabled(false);
-        if (!output->commit_state(newState)) {
-            qCCritical(treelandCore, "commit failed on output %s", output->handle()->name);
+        wlr_output_state_set_enabled(&newState, false);
+        if (!wlr_output_commit_state(output, &newState)) {
+            qCCritical(treelandCore, "commit failed on output %s", output->name);
         }
         break;
     case ZWLR_OUTPUT_POWER_V1_MODE_ON:
-        if (output->handle()->enabled) {
+        if (output->enabled) {
             return;
         }
-        newState.set_enabled(true);
-        if (!output->commit_state(newState)) {
-            qCCritical(treelandCore, "commit failed on output %s", output->handle()->name);
+        wlr_output_state_set_enabled(&newState, true);
+        if (!wlr_output_commit_state(output, &newState)) {
+            qCCritical(treelandCore, "commit failed on output %s", output->name);
         }
         break;
     }
@@ -1469,21 +1476,21 @@ void Helper::init(Treeland::Treeland *treeland)
     }
 
     m_allocator = qw_allocator::autocreate(*m_backend->handle(), *m_renderer);
-    m_renderer->init_wl_display(*m_server->handle());
-    qw_drm::create(*m_server->handle(), *m_renderer);
+    m_renderer->init_wl_display(m_server->handle());
+    qw_drm::create(m_server->handle(), *m_renderer);
 
     // free follow display
-    m_compositor = qw_compositor::create(*m_server->handle(), 6, *m_renderer);
-    qw_subcompositor::create(*m_server->handle());
-    qw_screencopy_manager_v1::create(*m_server->handle());
-    qw_ext_image_copy_capture_manager_v1::create(*m_server->handle(), 1);
-    qw_ext_output_image_capture_source_manager_v1::create(*m_server->handle(), 1);
-    m_foreignToplevelImageCaptureManager = qw_ext_foreign_toplevel_image_capture_source_manager_v1::create(*m_server->handle(), 1);
+    m_compositor = qw_compositor::create(m_server->handle(), 6, *m_renderer);
+    qw_subcompositor::create(m_server->handle());
+    qw_screencopy_manager_v1::create(m_server->handle());
+    qw_ext_image_copy_capture_manager_v1::create(m_server->handle(), 1);
+    qw_ext_output_image_capture_source_manager_v1::create(m_server->handle(), 1);
+    m_foreignToplevelImageCaptureManager = qw_ext_foreign_toplevel_image_capture_source_manager_v1::create(m_server->handle(), 1);
     connect(m_foreignToplevelImageCaptureManager,
             &qw_ext_foreign_toplevel_image_capture_source_manager_v1::notify_new_request,
             this, &Helper::handleNewForeignToplevelCaptureRequest);
 
-    qw_viewporter::create(*m_server->handle());
+    qw_viewporter::create(m_server->handle());
     m_renderWindow->init(m_renderer, m_allocator);
 
     auto *xwaylandOutputManager =
@@ -1511,7 +1518,7 @@ void Helper::init(Treeland::Treeland *treeland)
             this,
             &Helper::onSurfaceModeChanged);
 
-    auto gammaControlManager = qw_gamma_control_manager_v1::create(*m_server->handle());
+    auto gammaControlManager = qw_gamma_control_manager_v1::create(m_server->handle());
     connect(gammaControlManager,
             &qw_gamma_control_manager_v1::notify_set_gamma,
             this,
@@ -1523,21 +1530,21 @@ void Helper::init(Treeland::Treeland *treeland)
             &Helper::onOutputTestOrApply);
 
     m_server->attach<WCursorShapeManagerV1>();
-    qw_fractional_scale_manager_v1::create(*m_server->handle(), WLR_FRACTIONAL_SCALE_V1_VERSION);
-    qw_data_control_manager_v1::create(*m_server->handle());
-    qw_ext_data_control_manager_v1::create(*m_server->handle(), EXT_DATA_CONTROL_MANAGER_V1_VERSION);
-    qw_alpha_modifier_v1::create(*m_server->handle());
-    auto *foreignRegistry = qw_xdg_foreign_registry::create(*m_server->handle());
-    qw_xdg_foreign_v2::create(*m_server->handle(), *foreignRegistry);
+    qw_fractional_scale_manager_v1::create(m_server->handle(), WLR_FRACTIONAL_SCALE_V1_VERSION);
+    qw_data_control_manager_v1::create(m_server->handle());
+    qw_ext_data_control_manager_v1::create(m_server->handle(), EXT_DATA_CONTROL_MANAGER_V1_VERSION);
+    qw_alpha_modifier_v1::create(m_server->handle());
+    auto *foreignRegistry = qw_xdg_foreign_registry::create(m_server->handle());
+    qw_xdg_foreign_v2::create(m_server->handle(), *foreignRegistry);
 
-    m_idleNotifier = qw_idle_notifier_v1::create(*m_server->handle());
+    m_idleNotifier = qw_idle_notifier_v1::create(m_server->handle());
 
-    m_idleInhibitManager = qw_idle_inhibit_manager_v1::create(*m_server->handle());
+    m_idleInhibitManager = qw_idle_inhibit_manager_v1::create(m_server->handle());
     connect(m_idleInhibitManager, &qw_idle_inhibit_manager_v1::notify_new_inhibitor, this, &Helper::onNewIdleInhibitor);
 
     m_screensaverInterfaceV1 = m_server->attach<ScreensaverInterfaceV1>();
 
-    m_outputPowerManager = qw_output_power_manager_v1::create(*m_server->handle());
+    m_outputPowerManager = qw_output_power_manager_v1::create(m_server->handle());
 
     connect(m_outputPowerManager, &qw_output_power_manager_v1::notify_set_mode, this, &Helper::onSetOutputPowerMode);
 #ifdef EXT_SESSION_LOCK_V1

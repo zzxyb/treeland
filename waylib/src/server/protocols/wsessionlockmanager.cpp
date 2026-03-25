@@ -29,7 +29,7 @@ public:
 WSessionLockManagerPrivate::WSessionLockManagerPrivate(WSessionLockManager *qq)
     : WWrapObjectPrivate(qq)
 {
-    
+
 }
 
 void WSessionLockManagerPrivate::onNewLock(qw_session_lock_v1 *sessionLock)
@@ -40,7 +40,7 @@ void WSessionLockManagerPrivate::onNewLock(qw_session_lock_v1 *sessionLock)
     WSessionLock *lock = new WSessionLock(sessionLock, server);
     lock->setParent(server);
     Q_ASSERT(lock->parent() == server);
-    
+
     lock->safeConnect(&qw_session_lock_v1::before_destroy, q, [this, sessionLock]() {
         onLockDestroy(sessionLock);
     });
@@ -53,7 +53,7 @@ void WSessionLockManagerPrivate::onLockDestroy(qw_session_lock_v1 *sessionLock)
 {
     W_Q(WSessionLockManager);
     WSessionLock *lock = WSessionLock::fromHandle(sessionLock);
-    
+
     bool ok = lockList.removeOne(lock);
     Q_ASSERT(ok);
     Q_EMIT q->lockDestroyed(lock);
@@ -75,7 +75,7 @@ void WSessionLockManager::create(WServer *server)
 {
     W_D(WSessionLockManager);
 
-    auto *session_lock_manager = qw_session_lock_manager_v1::create(*server->handle());
+    auto *session_lock_manager = qw_session_lock_manager_v1::create(server->handle());
     connect(session_lock_manager, &qw_session_lock_manager_v1::notify_new_lock, this, [d](wlr_session_lock_v1 *lock) {
         d->onNewLock(qw_session_lock_v1::from(lock));
     });

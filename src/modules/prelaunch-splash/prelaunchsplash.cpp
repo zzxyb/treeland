@@ -129,7 +129,7 @@ PrelaunchSplash::~PrelaunchSplash() = default;
 
 void PrelaunchSplash::create(WAYLIB_SERVER_NAMESPACE::WServer *server)
 {
-    d->init(*server->handle(), TREELAND_PRELAUNCH_SPLASH_MANAGER_V2_VERSION);
+    d->init(server->handle(), TREELAND_PRELAUNCH_SPLASH_MANAGER_V2_VERSION);
     qCDebug(prelaunchSplash) << "PrelaunchSplash v2 global created";
 }
 

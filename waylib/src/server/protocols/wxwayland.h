@@ -6,10 +6,10 @@
 #include <WServer>
 
 QW_BEGIN_NAMESPACE
-class qw_xwayland;
 class qw_compositor;
 QW_END_NAMESPACE
 
+struct wlr_xwayland;
 struct xcb_connection_t;
 struct xcb_screen_t;
 typedef uint32_t xcb_atom_t;
@@ -43,9 +43,7 @@ public:
 
     WXWayland(QW_NAMESPACE::qw_compositor *compositor, bool lazy = true);
 
-    inline QW_NAMESPACE::qw_xwayland *handle() const {
-        return nativeInterface<QW_NAMESPACE::qw_xwayland>();
-    }
+    wlr_xwayland *handle() const;
 
     QByteArray displayName() const;
 

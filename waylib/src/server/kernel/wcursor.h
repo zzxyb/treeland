@@ -3,6 +3,25 @@
 
 #pragma once
 
+extern "C" {
+#include <wlr/types/wlr_input_device.h>
+#include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_tablet_pad.h>
+#include <wlr/types/wlr_tablet_tool.h>
+#include <wlr/types/wlr_touch.h>
+#include <wlr/types/wlr_switch.h>
+
+#define static
+#include <wlr/backend/drm.h>
+#undef static
+#include <wlr/backend/wayland.h>
+#ifdef WLR_HAVE_X11_BACKEND
+#include <wlr/backend/x11.h>
+#endif
+#include <wlr/backend/libinput.h>
+}
+
 #include <wglobal.h>
 #include <woutputlayout.h>
 #include <wsurface.h>
@@ -14,10 +33,9 @@ QT_BEGIN_NAMESPACE
 class QWindow;
 QT_END_NAMESPACE
 
+struct wlr_cursor;
+
 QW_BEGIN_NAMESPACE
-class qw_xcursor_manager;
-class qw_input_device;
-class qw_cursor;
 class qw_output_cursor;
 class qw_surface;
 QW_END_NAMESPACE
@@ -43,9 +61,9 @@ public:
 
     explicit WCursor(QObject *parent = nullptr);
 
-    QW_NAMESPACE::qw_cursor *handle() const;
+    wlr_cursor *handle() const;
 
-    static WCursor *fromHandle(const QW_NAMESPACE::qw_cursor *handle);
+    static WCursor *fromHandle(wlr_cursor *handle);
 
     static Qt::MouseButton fromNativeButton(uint32_t code);
     static uint32_t toNativeButton(Qt::MouseButton button);
@@ -94,10 +112,10 @@ protected:
     WCursor(WCursorPrivate &dd, QObject *parent = nullptr);
     ~WCursor() override = default;
 
-    virtual void move(QW_NAMESPACE::qw_input_device *device, const QPointF &delta);
-    virtual void setPosition(QW_NAMESPACE::qw_input_device *device, const QPointF &pos);
-    virtual bool setPositionWithChecker(QW_NAMESPACE::qw_input_device *device, const QPointF &pos);
-    virtual void setScalePosition(QW_NAMESPACE::qw_input_device *device, const QPointF &ratio);
+    virtual void move(wlr_input_device *device, const QPointF &delta);
+    virtual void setPosition(wlr_input_device *device, const QPointF &pos);
+    virtual bool setPositionWithChecker(wlr_input_device *device, const QPointF &pos);
+    virtual void setScalePosition(wlr_input_device *device, const QPointF &ratio);
 
 private:
     friend class WSeat;

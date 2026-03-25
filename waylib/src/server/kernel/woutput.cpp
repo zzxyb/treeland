@@ -8,14 +8,25 @@
 #include "wtools.h"
 #include "platformplugin/qwlrootscreen.h"
 #include "private/wglobal_p.h"
+#include "wcontainerof.h"
 
-#include <qwoutput.h>
-#include <qwoutputlayout.h>
-#include <qwrenderer.h>
-#include <qwswapchain.h>
-#include <qwallocator.h>
-#include <qwrendererinterface.h>
-#include <qwoutputinterface.h>
+extern "C" {
+#include <math.h>
+#define static
+#include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_output_layout.h>
+#include <wlr/render/interface.h>
+#undef static
+#include <wlr/render/wlr_renderer.h>
+#include <wlr/render/allocator.h>
+#include <wlr/render/drm_format_set.h>
+#include <wlr/interfaces/wlr_output.h>
+}
+extern "C" {
+#define slots slots_c
+#include <wlr/render/swapchain.h>
+#undef slots
+}
 
 #include <QLoggingCategory>
 #include <QCoreApplication>
@@ -25,7 +36,6 @@
 #include <xf86drm.h>
 #include <drm_fourcc.h>
 
-QW_USE_NAMESPACE
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 // Output management and configuration
@@ -35,107 +45,70 @@ Q_LOGGING_CATEGORY(waylibOutputHW, "waylib.server.output.hardware", QtInfoMsg)
 // Buffer and swapchain management
 Q_LOGGING_CATEGORY(waylibOutputBuffer, "waylib.server.output.buffer", QtDebugMsg)
 
-class Q_DECL_HIDDEN WOutputPrivate : public WWrapObjectPrivate
+class Q_DECL_HIDDEN WOutputPrivate
 {
 public:
-    WOutputPrivate(WOutput *qq, qw_output *handle)
-        : WWrapObjectPrivate(qq)
+    WOutputPrivate(WOutput *qq, wlr_output *handle)
+        : q(qq)
+        , handle(handle)
     {
-        initHandle(handle);
-        this->handle()->set_data(this, qq);
+        handle->data = qq;
     }
-
-    void instantRelease() override {
-        handle()->set_data(nullptr, nullptr);
-        if (layout)
-            layout->remove(q_func());
-    }
-
-    WWRAP_HANDLE_FUNCTIONS(qw_output, wlr_output)
 
     inline QSize size() const {
-        Q_ASSERT(handle());
-        return QSize(nativeHandle()->width, nativeHandle()->height);
+        return QSize(handle->width, handle->height);
     }
 
     inline WOutput::Transform orientation() const {
-        return static_cast<WOutput::Transform>(nativeHandle()->transform);
+        return static_cast<WOutput::Transform>(handle->transform);
     }
 
-    W_DECLARE_PUBLIC(WOutput)
+    static void onNotifyCommitCallback(wl_listener *listener, void *data);
+    static void onDestroyCallback(wl_listener *listener, void *data);
 
+    wlr_output *handle = nullptr;;
+    WOutput *q = nullptr;
     bool forceSoftwareCursor = false;
     QWlrootsScreen *screen = nullptr;
     QQuickWindow *window = nullptr;
 
-    WBackend *backend = nullptr;
     WOutputLayout *layout = nullptr;
+
+    wl_listener notifyCommitListener;
+    wl_listener destoryListener;
 };
 
-WOutput::WOutput(qw_output *handle, WBackend *backend)
-    : WWrapObject(*new WOutputPrivate(this, handle))
+WOutput::WOutput(wlr_output *handle, WBackend *backend, QObject *parent)
+    : QObject(parent)
+    , d(new WOutputPrivate(this, handle))
 {
-    d_func()->backend = backend;
-    connect(handle, qOverload<wlr_output_event_commit*>(&qw_output::notify_commit),
-            this, [this] (wlr_output_event_commit *event) {
-        if (event->state->committed & WLR_OUTPUT_STATE_SCALE) {
-            Q_EMIT this->scaleChanged();
-            Q_EMIT this->effectiveSizeChanged();
-        }
+    d->notifyCommitListener.notify = WOutputPrivate::onNotifyCommitCallback;
+    wl_signal_add(&handle->events.commit, &d->notifyCommitListener);
 
-        if (event->state->committed & WLR_OUTPUT_STATE_MODE) {
-            Q_EMIT this->modeChanged();
-            Q_EMIT this->transformedSizeChanged();
-            Q_EMIT this->effectiveSizeChanged();
-        }
-
-        if (event->state->committed & WLR_OUTPUT_STATE_TRANSFORM) {
-            Q_EMIT this->orientationChanged();
-            Q_EMIT this->transformedSizeChanged();
-            Q_EMIT this->effectiveSizeChanged();
-        }
-
-        if (event->state->committed & WLR_OUTPUT_STATE_BUFFER)
-            Q_EMIT this->bufferCommitted();
-
-        if (event->state->committed & WLR_OUTPUT_STATE_ENABLED)
-            Q_EMIT this->enabledChanged();
-    });
+    d->destoryListener.notify = WOutputPrivate::onDestroyCallback;
+    wl_signal_add(&handle->events.destroy, &d->destoryListener);
 }
 
 WOutput::~WOutput()
 {
-
+    if (d->handle) {
+        wlr_output_destroy(d->handle);
+    }
 }
 
-WBackend *WOutput::backend() const
+wlr_renderer *WOutput::renderer() const
 {
-    W_DC(WOutput);
-    return d->backend;
+    return d->handle->renderer;
 }
 
-WServer *WOutput::server() const
+wlr_swapchain *WOutput::swapchain() const
 {
-    W_DC(WOutput);
-    return d->backend->server();
+    return d->handle->swapchain;
 }
 
-qw_renderer *WOutput::renderer() const
+wlr_allocator *WOutput::allocator() const
 {
-    W_DC(WOutput);
-    return qw_renderer::from(d->nativeHandle()->renderer);
-}
-
-qw_swapchain *WOutput::swapchain() const
-{
-    W_DC(WOutput);
-    return qw_swapchain::from(d->nativeHandle()->swapchain);
-}
-
-qw_allocator *WOutput::allocator() const
-{
-    W_DC(WOutput);
-    return qw_allocator::from(d->nativeHandle()->allocator);
+    return d->handle->allocator;
 }
 
 // Copy from wlroots
@@ -256,8 +229,8 @@ static bool output_pick_format(struct wlr_output *output,
             return false;
         }
         if (!wlr_drm_format_intersect(format, display_format, render_format)) {
-            qCWarning(waylibOutputHW) << "Failed to find compatible format modifiers for format" 
-                                     << QString("0x%1").arg(fmt, 0, 16) 
+            qCWarning(waylibOutputHW) << "Failed to find compatible format modifiers for format"
+                                     << QString("0x%1").arg(fmt, 0, 16)
                                      << "on output:" << QString::fromUtf8(output->name);
             return false;
         }
@@ -293,7 +266,7 @@ static struct wlr_swapchain *create_swapchain(struct wlr_output *output,
     }
 
     char *format_name = drmGetFormatName(format.format);
-    qCInfo(waylibOutputBuffer) << "Selected primary buffer format:" 
+    qCInfo(waylibOutputBuffer) << "Selected primary buffer format:"
                               << (format_name ? QString::fromUtf8(format_name) : QString("<unknown>"))
                               << QString("(0x%1)").arg(format.format, 8, 16, QLatin1Char('0'))
                               << "for output:" << QString::fromUtf8(output->name);
@@ -358,19 +331,19 @@ static bool wlr_output_configure_primary_swapchain(struct wlr_output *output, in
     if (test) {
         qCDebug(waylibOutputBuffer) << "Testing swapchain for output:" << QString::fromUtf8(output->name);
         if (!test_swapchain(output, swapchain, state)) {
-            qCDebug(waylibOutputBuffer) << "Output test failed for" << QString::fromUtf8(output->name) 
+            qCDebug(waylibOutputBuffer) << "Output test failed for" << QString::fromUtf8(output->name)
                                       << "- retrying without modifiers";
             wlr_swapchain_destroy(swapchain);
             swapchain = create_swapchain(output, width, height, format, false);
             if (swapchain == NULL) {
-                qCCritical(waylibOutputBuffer) << "Failed to create modifier-less swapchain for output:" 
+                qCCritical(waylibOutputBuffer) << "Failed to create modifier-less swapchain for output:"
                                              << QString::fromUtf8(output->name);
                 return false;
             }
-            qCDebug(waylibOutputBuffer) << "Testing modifier-less swapchain for output:" 
+            qCDebug(waylibOutputBuffer) << "Testing modifier-less swapchain for output:"
                                       << QString::fromUtf8(output->name);
             if (!test_swapchain(output, swapchain, state)) {
-                qCCritical(waylibOutputBuffer) << "Swapchain test failed for output:" 
+                qCCritical(waylibOutputBuffer) << "Swapchain test failed for output:"
                                              << QString::fromUtf8(output->name);
                 wlr_swapchain_destroy(swapchain);
                 return false;
@@ -404,31 +377,31 @@ static bool output_pick_cursor_format(struct wlr_output *output,
 // End
 
 bool WOutput::configurePrimarySwapchain(const QSize &size, uint32_t format,
-                                        qw_swapchain **swapchain, bool doTest)
+                                        wlr_swapchain **swapchain, bool doTest)
 {
     Q_ASSERT(!size.isEmpty());
-    wlr_swapchain *sc = (*swapchain)->handle();
-    bool ok = wlr_output_configure_primary_swapchain(nativeHandle(), size.width(), size.height(),
+    wlr_swapchain *sc = *swapchain;
+    bool ok = wlr_output_configure_primary_swapchain(handle(), size.width(), size.height(),
                                                      format, &sc, doTest);
     if (!ok)
         return false;
-    *swapchain = qw_swapchain::from(sc);
+    *swapchain = sc;
     return true;
 }
 
-bool WOutput::configureCursorSwapchain(const QSize &size, uint32_t drmFormat, qw_swapchain **swapchain)
+bool WOutput::configureCursorSwapchain(const QSize &size, uint32_t drmFormat, wlr_swapchain **swapchain)
 {
     Q_ASSERT(!size.isEmpty());
     auto sc = *swapchain;
-    if (!sc || sc->handle()->width != size.width() || sc->handle()->height != size.height()) {
+    if (!sc || sc->width != size.width() || sc->height != size.height()) {
         wlr_drm_format format = {};
-        if (!output_pick_cursor_format(nativeHandle(), &format, drmFormat)) {
+        if (!output_pick_cursor_format(handle(), &format, drmFormat)) {
             qCDebug(waylibOutputHW) << "Failed to select compatible cursor format";
             return false;
         }
 
         delete sc;
-        sc = qw_swapchain::create(*allocator(), size.width(), size.height(), &format);
+        sc = wlr_swapchain_create(allocator(), size.width(), size.height(), &format);
         wlr_drm_format_finish(&format);
         if (!sc) {
             qCDebug(waylibOutputBuffer) << "Failed to create cursor swapchain with selected format";
@@ -440,21 +413,14 @@ bool WOutput::configureCursorSwapchain(const QSize &size, uint32_t drmFormat, qw
     return true;
 }
 
-qw_output *WOutput::handle() const
+wlr_output *WOutput::handle() const
 {
-    W_DC(WOutput);
-    return d->handle();
+    return d->handle;
 }
 
-wlr_output *WOutput::nativeHandle() const
+WOutput *WOutput::fromHandle(wlr_output *handle)
 {
-    W_DC(WOutput);
-    return d->nativeHandle();
-}
-
-WOutput *WOutput::fromHandle(const qw_output *handle)
-{
-    return handle->get_data<WOutput>();
+    return static_cast<WOutput *>(handle->data);
 }
 
 WOutput *WOutput::fromScreen(const QScreen *screen)
@@ -464,38 +430,32 @@ WOutput *WOutput::fromScreen(const QScreen *screen)
 
 void WOutput::setScreen(QWlrootsScreen *screen)
 {
-    W_D(WOutput);
     d->screen = screen;
 }
 
 QWlrootsScreen *WOutput::screen() const
 {
-    W_DC(WOutput);
     return d->screen;
 }
 
 QString WOutput::name() const
 {
-    W_DC(WOutput);
-    return QString::fromUtf8(d->nativeHandle()->name);
+    return QString::fromUtf8(handle()->name);
 }
 
 bool WOutput::isEnabled() const
 {
-    W_DC(WOutput);
-    return d->nativeHandle()->enabled;
+    return handle()->enabled;
 }
 
 QPoint WOutput::position() const
 {
-    W_DC(WOutput);
-
     QPoint p;
 
     if (Q_UNLIKELY(!d->layout))
         return p;
 
-    auto l_output = d->layout->handle()->get(d->nativeHandle());
+    auto l_output = wlr_output_layout_get(d->layout->handle(), handle());
 
     if (Q_UNLIKELY(!l_output))
         return p;
@@ -505,58 +465,45 @@ QPoint WOutput::position() const
 
 QSize WOutput::size() const
 {
-    W_DC(WOutput);
-
     return d->size();
 }
 
 QSize WOutput::transformedSize() const
 {
-    W_DC(WOutput);
     int width, height;
-    d->handle()->transformed_resolution(&width, &height);
+    wlr_output_transformed_resolution(handle(), &width, &height);
     return QSize( width, height );
 }
 
 QSize WOutput::effectiveSize() const
 {
-    W_DC(WOutput);
-
     int width, height;
-    d->handle()->effective_resolution(&width, &height);
+    wlr_output_effective_resolution(handle(), &width, &height);
     return QSize( width, height );
 }
 
 WOutput::Transform WOutput::orientation() const
 {
-    W_DC(WOutput);
-
     return d->orientation();
 }
 
 float WOutput::scale() const
 {
-    W_DC(WOutput);
-
-    return d->nativeHandle()->scale;
+    return handle()->scale;
 }
 
 void WOutput::attach(QQuickWindow *window)
 {
-    W_D(WOutput);
     d->window = window;
 }
 
 QQuickWindow *WOutput::attachedWindow() const
 {
-    W_DC(WOutput);
     return d->window;
 }
 
 void WOutput::setLayout(WOutputLayout *layout)
 {
-    W_D(WOutput);
-
     if (d->layout == layout)
         return;
 
@@ -565,8 +512,6 @@ void WOutput::setLayout(WOutputLayout *layout)
 
 WOutputLayout *WOutput::layout() const
 {
-    W_DC(WOutput);
-
     return d->layout;
 }
 
@@ -591,24 +536,64 @@ const QList<WCursor *> &WOutput::cursorList() const
 
 bool WOutput::forceSoftwareCursor() const
 {
-    W_DC(WOutput);
     return d->forceSoftwareCursor;
 }
 
 void WOutput::setForceSoftwareCursor(bool on)
 {
-    W_D(WOutput);
     if (d->forceSoftwareCursor == on)
         return;
     d->forceSoftwareCursor = on;
-    d->handle()->lock_software_cursors(on);
+    wlr_output_lock_software_cursors(handle(), on);
 
     Q_EMIT forceSoftwareCursorChanged();
 }
 
 void WOutput::scheduleFrame()
 {
-    return handle()->schedule_frame();
+    return wlr_output_schedule_frame(handle());
+}
+
+void WOutputPrivate::onNotifyCommitCallback(wl_listener *listener, void *data)
+{
+    WOutputPrivate *d =
+        containerOf(listener, &WOutputPrivate::notifyCommitListener);
+    wlr_output_event_commit *event = static_cast<wlr_output_event_commit *>(data);
+    if (event->state->committed & WLR_OUTPUT_STATE_SCALE) {
+        Q_EMIT d->q->scaleChanged();
+        Q_EMIT d->q->effectiveSizeChanged();
+    }
+
+    if (event->state->committed & WLR_OUTPUT_STATE_MODE) {
+        Q_EMIT d->q->modeChanged();
+        Q_EMIT d->q->transformedSizeChanged();
+        Q_EMIT d->q->effectiveSizeChanged();
+    }
+
+    if (event->state->committed & WLR_OUTPUT_STATE_TRANSFORM) {
+        Q_EMIT d->q->orientationChanged();
+        Q_EMIT d->q->transformedSizeChanged();
+        Q_EMIT d->q->effectiveSizeChanged();
+    }
+
+    if (event->state->committed & WLR_OUTPUT_STATE_BUFFER)
+        Q_EMIT d->q->bufferCommitted();
+
+    if (event->state->committed & WLR_OUTPUT_STATE_ENABLED)
+        Q_EMIT d->q->enabledChanged();
+}
+
+void WOutputPrivate::onDestroyCallback(wl_listener *listener, void *data)
+{
+    WOutputPrivate *d =
+        containerOf(listener, &WOutputPrivate::destoryListener);
+
+    // remove 一定要放在这里，防止 wlroots 中的断言触发
+    wl_list_remove(&d->destoryListener.link);
+    wl_list_remove(&d->notifyCommitListener.link);
+    d->handle = nullptr; // 标记 handle 即将被 wlroots free
+
+    Q_EMIT d->q->handleDestroyed(d->q);
 }
 
 WAYLIB_SERVER_END_NAMESPACE

@@ -52,8 +52,7 @@ void WSessionLockSurfacePrivate::init() {
     handle()->set_data(this, q);
 
     Q_ASSERT(!q->surface());
-    auto qsurface = qw_surface::from((*handle())->surface);
-    surface = new WSurface(qsurface, q);
+    surface = new WSurface((*handle())->surface, q);
     surface->setAttachedData<WSessionLockSurface>(q);
 
     output = nativeHandle()->output ? WOutput::fromHandle(qw_output::from(nativeHandle()->output)) : nullptr;
@@ -62,7 +61,7 @@ void WSessionLockSurfacePrivate::init() {
 void WSessionLockSurfacePrivate::instantRelease()
 {
     W_Q(WSessionLockSurface);
-    
+
     handle()->set_data(nullptr, nullptr);
     auto qsurface = qw_surface::from((*handle())->surface);
     qsurface->disconnect(q);
@@ -80,7 +79,7 @@ WSessionLockSurface::WSessionLockSurface(qw_session_lock_surface_v1 *handle, QOb
 
 WSessionLockSurface::~WSessionLockSurface()
  {
-    
+
 }
 
 bool WSessionLockSurface::hasCapability(Capability cap) const

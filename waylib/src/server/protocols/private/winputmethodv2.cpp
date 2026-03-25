@@ -35,7 +35,7 @@ public:
 
 WInputMethodManagerV2::WInputMethodManagerV2([[maybe_unused]] QObject *parent)
     : WObject(*new WInputMethodManagerV2Private(this), nullptr)
-{ 
+{
 }
 
 QByteArrayView WInputMethodManagerV2::interfaceName() const
@@ -45,7 +45,7 @@ QByteArrayView WInputMethodManagerV2::interfaceName() const
 
 void WInputMethodManagerV2::create(WServer *server)
 {
-    auto handle = qw_input_method_manager_v2::create(*server->handle());
+    auto handle = qw_input_method_manager_v2::create(server->handle());
     Q_ASSERT(handle);
     m_handle = handle;
     connect(handle, &qw_input_method_manager_v2::notify_input_method, this, [this](wlr_input_method_v2* im) {
@@ -92,7 +92,7 @@ qw_input_method_v2 *WInputMethodV2::handle() const
 WSeat *WInputMethodV2::seat() const
 {
     W_DC(WInputMethodV2);
-    return WSeat::fromHandle(qw_seat::from(d->nativeHandle()->seat));
+    return WSeat::fromHandle(d->nativeHandle()->seat);
 }
 
 void WInputMethodV2::sendContentType(quint32 hint, quint32 purpose)

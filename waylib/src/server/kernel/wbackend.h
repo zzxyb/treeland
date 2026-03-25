@@ -5,43 +5,47 @@
 
 #include <WServer>
 
-#include <qwbackend.h>
-
 #include <QObject>
 
-QW_BEGIN_NAMESPACE
-class qw_session;
-QW_END_NAMESPACE
+extern "C" {
+#include <wlr/backend/session.h>
+#include <wlr/backend.h>
+#include <wlr/backend/multi.h>
+#define static
+#include <wlr/backend/drm.h>
+#undef static
+#include <wlr/backend/wayland.h>
+#ifdef WLR_HAVE_X11_BACKEND
+#include <wlr/backend/x11.h>
+#endif
+#include <wlr/backend/libinput.h>
+#include <wlr/backend/headless.h>
+}
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 class WOutput;
 class WInputDevice;
 class WBackendPrivate;
-class WAYLIB_SERVER_EXPORT WBackend : public QObject, public WObject,  public WServerInterface
+class WAYLIB_SERVER_EXPORT WBackend : public QObject
 {
     Q_OBJECT
-    friend class WOutputPrivate;
-    W_DECLARE_PRIVATE(WBackend)
-
 public:
-    explicit WBackend();
-
-    QW_NAMESPACE::qw_backend *handle() const;
-    QW_NAMESPACE::qw_session *session() const;
+    explicit WBackend(WServer *server, QObject *parent = nullptr);
+    ~WBackend() override;
+    wlr_backend *handle() const;
+    wlr_session *session() const;
 
     QList<WOutput*> outputList() const;
     QList<WInputDevice*> inputDeviceList() const;
 
-    bool hasDrm() const;
-    bool hasX11() const;
-    bool hasWayland() const;
+    bool isDrm() const;
+    bool isX11() const;
+    bool isWayland() const;
 
     bool isSessionActive() const;
     void activateSession();
     void deactivateSession();
-
-    QByteArrayView interfaceName() const override;
 
 Q_SIGNALS:
     void outputAdded(WOutput *output);
@@ -50,12 +54,12 @@ Q_SIGNALS:
     void inputAdded(WInputDevice *input);
     void inputRemoved(WInputDevice *input);
 
-    void created();
+private Q_SLOTS:
+    void onOutputDestroyed(WOutput *output);
 
-protected:
-    void create(WServer *server) override;
-    void destroy(WServer *server) override;
-    wl_global *global() const override;
+private:
+    friend class WBackendPrivate;
+    std::unique_ptr<WBackendPrivate> d;
 };
 
 WAYLIB_SERVER_END_NAMESPACE

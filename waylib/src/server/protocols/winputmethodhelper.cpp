@@ -18,8 +18,11 @@
 #include <qwtextinputv3.h>
 #include <qwvirtualkeyboardv1.h>
 #include <qwinputdevice.h>
-#include <qwseat.h>
 #include <qwbox.h>
+
+extern "C" {
+#include <wlr/types/wlr_seat.h>
+}
 
 #include <QLoggingCategory>
 #include <QQmlInfo>
@@ -217,9 +220,9 @@ void WInputMethodHelper::handleNewKGV2(qw_input_method_keyboard_grab_v2 *kgv2)
         if (!d->seat)
             return;
         if (kgv2->handle()->keyboard) {
-            d->seat->handle()->keyboard_send_modifiers(&kgv2->handle()->keyboard->modifiers);
+            wlr_seat_keyboard_send_modifiers(d->seat->handle(), &kgv2->handle()->keyboard->modifiers);
         }
-        d->seat->handle()->keyboard_end_grab();
+        wlr_seat_keyboard_end_grab(d->seat->handle());
     };
     auto setKeyboard = [](qw_input_method_keyboard_grab_v2 *kgv2, WInputDevice *keyboard) {
         if (keyboard) {
@@ -251,7 +254,7 @@ void WInputMethodHelper::handleNewKGV2(qw_input_method_keyboard_grab_v2 *kgv2)
     d->handlerArg.grab = kgv2;
     d->keyboardGrab.data = &d->handlerArg;
     d->keyboardGrab.interface = &d->grabInterface;
-    d->seat->handle()->keyboard_start_grab(&d->keyboardGrab);
+    wlr_seat_keyboard_start_grab(d->seat->handle(), &d->keyboardGrab);
     connect(kgv2, &qw_input_method_keyboard_grab_v2::before_destroy, this, [this, d, endGrab, kgv2] {
         if (activeKeyboardGrab() == kgv2) {
             endGrab(kgv2);

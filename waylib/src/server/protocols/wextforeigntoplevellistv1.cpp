@@ -52,7 +52,7 @@ public:
         surface->safeConnect(&WToplevelSurface::appIdChanged, handle, [this, handle, surface] {
             updateState(surface, handle);
         });
-        
+
         surfaces.insert({ surface, std::unique_ptr<qw_ext_foreign_toplevel_handle_v1>(handle) });
     }
 
@@ -121,7 +121,7 @@ QByteArrayView WExtForeignToplevelListV1::interfaceName() const
 
 void WExtForeignToplevelListV1::create(WServer *server)
 {
-    m_handle = qw_ext_foreign_toplevel_list_v1::create(*server->handle(), EXT_FOREIGN_TOPLEVEL_LIST_V1_VERSION);
+    m_handle = qw_ext_foreign_toplevel_list_v1::create(server->handle(), EXT_FOREIGN_TOPLEVEL_LIST_V1_VERSION);
 }
 
 void WExtForeignToplevelListV1::destroy([[maybe_unused]] WServer *server)

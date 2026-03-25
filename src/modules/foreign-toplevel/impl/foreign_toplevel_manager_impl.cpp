@@ -6,6 +6,7 @@
 #include "treeland-foreign-toplevel-manager-protocol.h"
 #include <wayland-server-core.h>
 
+#include <qwdisplay.h>
 #include <qwcompositor.h>
 #include <qwseat.h>
 
@@ -918,15 +919,15 @@ treeland_foreign_toplevel_manager_v1::~treeland_foreign_toplevel_manager_v1()
 }
 
 treeland_foreign_toplevel_manager_v1 *treeland_foreign_toplevel_manager_v1::create(
-    QW_NAMESPACE::qw_display *display)
+    wl_display *display)
 {
     auto *manager = new treeland_foreign_toplevel_manager_v1;
     if (!manager) {
         return nullptr;
     }
 
-    manager->event_loop = wl_display_get_event_loop(display->handle());
-    manager->global = wl_global_create(display->handle(),
+    manager->event_loop = wl_display_get_event_loop(display);
+    manager->global = wl_global_create(display,
                                        &treeland_foreign_toplevel_manager_v1_interface,
                                        FOREIGN_TOPLEVEL_MANAGEMENT_V1_VERSION,
                                        manager,
@@ -938,7 +939,7 @@ treeland_foreign_toplevel_manager_v1 *treeland_foreign_toplevel_manager_v1::crea
 
     wl_list_init(&manager->resources);
 
-    connect(display, &qw_display::before_destroy, manager, [manager]() {
+    connect(qw_display::get(display), &qw_display::before_destroy, manager, [manager]() {
         delete manager;
     });
 

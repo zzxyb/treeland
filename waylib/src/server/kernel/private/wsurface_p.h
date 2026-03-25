@@ -4,10 +4,19 @@
 #pragma once
 
 #include "wsurface.h"
-#include "private/wglobal_p.h"
+#include "wcontainerof.h"
 
-#include <qwcompositor.h>
-#include <qwbuffer.h>
+extern "C" {
+#define static
+#include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_subcompositor.h>
+#undef static
+#include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_client_buffer.h>
+#include <wlr/types/wlr_fractional_scale_v1.h>
+}
+
+#include <wayland-server-core.h>
 
 #include <QObject>
 #include <QPointer>
@@ -15,51 +24,59 @@
 struct wlr_surface;
 struct wlr_subsurface;
 
-QW_BEGIN_NAMESPACE
-class qw_subsurface;
-QW_END_NAMESPACE
-
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
-class Q_DECL_HIDDEN WSurfacePrivate : public WWrapObjectPrivate {
+class Q_DECL_HIDDEN WSurfacePrivate {
 public:
-    WSurfacePrivate(WSurface *qq, QW_NAMESPACE::qw_surface *handle);
+    WSurfacePrivate(WSurface *qq, wlr_surface *handle);
     ~WSurfacePrivate();
 
-    WWRAP_HANDLE_FUNCTIONS(QW_NAMESPACE::qw_surface, wlr_surface)
-
-    wl_client *waylandClient() const override;
+    wl_client *waylandClient() const;
 
     // begin slot function
     void on_commit();
-    void on_client_commit();
     // end slot function
 
     void init();
     void connect();
-    void instantRelease() override;    // release qwobject etc.
     void updateOutputs();
-    void setBuffer(QW_NAMESPACE::qw_buffer *newBuffer);
+    void setBuffer(wlr_buffer *newBuffer);
     void updateBuffer();
     void updateBufferOffset();
     void updatePreferredBufferScale();
     void preferredBufferScaleChange();
 
     WSurface *ensureSubsurface(wlr_subsurface *subsurface);
-    void setSubsurface(QW_NAMESPACE::qw_subsurface *newSubsurface);
+    void setSubsurface(wlr_subsurface *newSubsurface);
     void setHasSubsurface(bool newHasSubsurface);
     void updateHasSubsurface();
 
-    W_DECLARE_PUBLIC(WSurface)
+    // static wl_listener callbacks
+    static void onDestroy(wl_listener *listener, void *data);
+    static void onCommit(wl_listener *listener, void *data);
+    static void onMap(wl_listener *listener, void *data);
+    static void onUnmap(wl_listener *listener, void *data);
+    static void onNewSubsurface(wl_listener *listener, void *data);
+    static void onSubsurfaceDestroy(wl_listener *listener, void *data);
 
-    QPointer<QW_NAMESPACE::qw_subsurface> subsurface;
+    WSurface *q;
+    wlr_surface *handle = nullptr;
+    wlr_subsurface *subsurface = nullptr;
+
+    wl_listener destroyListener;
+    wl_listener commitListener;
+    wl_listener mapListener;
+    wl_listener unmapListener;
+    wl_listener newSubsurfaceListener;
+    wl_listener subsurfaceDestroyListener;
+
     bool hasSubsurface = false;
-    bool isSubsurface = false;  // qpointer would be null due to qwsubsurface' destroy, cache here
+    bool isSubsurface = false;
     uint32_t preferredBufferScale = 1;
     uint32_t explicitPreferredBufferScale = 0;
 
     bool needsFrame = false;
-    std::unique_ptr<QW_NAMESPACE::qw_buffer, QW_NAMESPACE::qw_buffer::unlocker> buffer;
+    wlr_buffer *buffer = nullptr;
     QList<WOutput*> outputs;
     WOutput *framePacingOutput = nullptr;
     QMetaObject::Connection frameDoneConnection;
