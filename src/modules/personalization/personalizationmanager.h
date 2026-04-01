@@ -3,10 +3,6 @@
 
 #pragma once
 
-#include "modules/personalization/impl/appearance_impl.h"
-#include "modules/personalization/impl/personalization_manager_impl.h"
-#include "modules/personalization/impl/types.h"
-
 #include <wserver.h>
 #include <wxdgsurface.h>
 #include <WWrapPointer>
@@ -15,11 +11,263 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 
+class SurfaceWrapper;
+class PersonalizationV1;
+class PersonalizationManagerV1Private;
+class PersonalizationWindowContextV1Private;
+class PersonalizationWallpaperContextV1Private;
+class PersonalizationCursorContextV1Private;
+class PersonalizationAppearanceContextV1Private;
+class PersonalizationFontContextV1Private;
+
 QW_USE_NAMESPACE
 WAYLIB_SERVER_USE_NAMESPACE
 
-class SurfaceWrapper;
-class PersonalizationV1;
+// Types
+struct Shadow
+{
+    int32_t radius;
+    QPoint offset;
+    QColor color;
+};
+
+struct Border
+{
+    int32_t width;
+    QColor color;
+};
+
+// ============================================================================
+// PersonalizationWindowContextV1
+// ============================================================================
+
+class PersonalizationWindowContextV1 : public QObject
+{
+    Q_OBJECT
+public:
+    enum WindowState
+    {
+        NoTitleBar = 1,
+    };
+    Q_ENUM(WindowState)
+    Q_DECLARE_FLAGS(WindowStates, WindowState)
+
+    ~PersonalizationWindowContextV1() override;
+
+    wlr_surface *surface() const;
+    int32_t backgroundType() const;
+    int32_t cornerRadius() const;
+    Shadow shadow() const;
+    Border border() const;
+    WindowStates states() const;
+
+    static PersonalizationWindowContextV1 *get(wl_resource *resource);
+
+Q_SIGNALS:
+    void beforeDestroy();
+    void backgroundTypeChanged();
+    void cornerRadiusChanged();
+    void shadowChanged();
+    void borderChanged();
+    void windowStateChanged();
+
+private:
+    explicit PersonalizationWindowContextV1(PersonalizationManagerV1Private *manager,
+                                            wl_client *client,
+                                            uint32_t id,
+                                            int version,
+                                            wlr_surface *surface);
+
+private:
+    std::unique_ptr<PersonalizationWindowContextV1Private> d;
+
+    friend class PersonalizationManagerV1Private;
+    friend class PersonalizationWindowContextV1Private;
+};
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(PersonalizationWindowContextV1::WindowStates)
+
+// ============================================================================
+// PersonalizationWallpaperContextV1
+// ============================================================================
+
+class PersonalizationWallpaperContextV1 : public QObject
+{
+    Q_OBJECT
+public:
+    ~PersonalizationWallpaperContextV1() override;
+
+    int32_t fd() const;
+    uint32_t uid() const;
+    uint32_t options() const;
+    bool isDark() const;
+    QString metaData() const;
+    QString identifier() const;
+    QString outputName() const;
+
+    void setMetaData(const QString &data);
+
+    static PersonalizationWallpaperContextV1 *get(wl_resource *resource);
+
+Q_SIGNALS:
+    void beforeDestroy();
+    void commit();
+    void getWallpapers();
+
+private:
+    explicit PersonalizationWallpaperContextV1(PersonalizationManagerV1Private *manager,
+                                               wl_client *client,
+                                               uint32_t id,
+                                               int version);
+
+private:
+    std::unique_ptr<PersonalizationWallpaperContextV1Private> d;
+
+    friend class PersonalizationManagerV1Private;
+    friend class PersonalizationWallpaperContextV1Private;
+};
+
+// ============================================================================
+// PersonalizationCursorContextV1
+// ============================================================================
+
+class PersonalizationCursorContextV1 : public QObject
+{
+    Q_OBJECT
+public:
+    ~PersonalizationCursorContextV1() override;
+
+    QSize size() const;
+    QString theme() const;
+
+    void setTheme(const QString &theme);
+    void setSize(const QSize &size);
+    void verify(bool verified);
+
+    void sendTheme();
+    void sendSize();
+
+    static PersonalizationCursorContextV1 *get(wl_resource *resource);
+
+Q_SIGNALS:
+    void beforeDestroy();
+    void commit();
+    void getSize();
+    void getTheme();
+
+private:
+    explicit PersonalizationCursorContextV1(PersonalizationManagerV1Private *manager,
+                                           wl_client *client,
+                                           uint32_t id,
+                                           int version);
+
+private:
+    std::unique_ptr<PersonalizationCursorContextV1Private> d;
+
+    friend class PersonalizationManagerV1Private;
+    friend class PersonalizationCursorContextV1Private;
+};
+
+// ============================================================================
+// PersonalizationAppearanceContextV1
+// ============================================================================
+
+class PersonalizationAppearanceContextV1 : public QObject
+{
+    Q_OBJECT
+public:
+    ~PersonalizationAppearanceContextV1() override;
+
+    void setRoundCornerRadius(int32_t radius);
+    void sendRoundCornerRadius(int32_t radius);
+
+    void setIconTheme(const QString &theme);
+    void sendIconTheme(const QString &theme);
+
+    void setActiveColor(const QString &color);
+    void sendActiveColor(const QString &color);
+
+    void setWindowOpacity(uint32_t opacity);
+    void sendWindowOpacity(uint32_t opacity);
+
+    void setWindowThemeType(uint32_t type);
+    void sendWindowThemeType(uint32_t type);
+
+    void setWindowTitlebarHeight(uint32_t height);
+    void sendWindowTitlebarHeight(uint32_t height);
+
+    static PersonalizationAppearanceContextV1 *get(wl_resource *resource);
+
+Q_SIGNALS:
+    void beforeDestroy();
+    void roundCornerRadiusChanged(int32_t radius);
+    void iconThemeChanged(const QString &iconTheme);
+    void activeColorChanged(const QString &color);
+    void windowOpacityChanged(uint32_t opacity);
+    void windowThemeTypeChanged(uint32_t type);
+    void titlebarHeightChanged(uint32_t height);
+
+    void requestRoundCornerRadius();
+    void requestIconTheme();
+    void requestActiveColor();
+    void requestWindowOpacity();
+    void requestWindowThemeType();
+    void requestWindowTitlebarHeight();
+
+private:
+    explicit PersonalizationAppearanceContextV1(PersonalizationManagerV1Private *manager,
+                                               wl_client *client,
+                                               uint32_t id,
+                                               int version);
+
+private:
+    std::unique_ptr<PersonalizationAppearanceContextV1Private> d;
+
+    friend class PersonalizationManagerV1Private;
+    friend class PersonalizationAppearanceContextV1Private;
+};
+
+// ============================================================================
+// PersonalizationFontContextV1
+// ============================================================================
+
+class PersonalizationFontContextV1 : public QObject
+{
+    Q_OBJECT
+public:
+    ~PersonalizationFontContextV1() override;
+
+    void sendFont(const QString &font);
+    void sendMonospaceFont(const QString &font);
+    void sendFontSize(uint32_t size);
+
+    static PersonalizationFontContextV1 *get(wl_resource *resource);
+
+Q_SIGNALS:
+    void beforeDestroy();
+    void fontChanged(const QString &font);
+    void monoFontChanged(const QString &font);
+    void fontSizeChanged(uint32_t size);
+    void requestFont();
+    void requestMonoFont();
+    void requestFontSize();
+
+private:
+    explicit PersonalizationFontContextV1(PersonalizationManagerV1Private *manager,
+                                         wl_client *client,
+                                         uint32_t id,
+                                         int version);
+
+private:
+    std::unique_ptr<PersonalizationFontContextV1Private> d;
+
+    friend class PersonalizationManagerV1Private;
+    friend class PersonalizationFontContextV1Private;
+};
+
+// ============================================================================
+// Personalization
+// ============================================================================
 
 class Personalization : public QObject
 {
@@ -78,14 +326,16 @@ private:
     int32_t m_cornerRadius;
     Shadow m_shadow;
     Border m_border;
-    personalization_window_context_v1::WindowStates m_states;
+    PersonalizationWindowContextV1::WindowStates m_states;
 
     QMetaObject::Connection m_connection;
 };
 
-class PersonalizationV1
-    : public QObject
-    , public WServerInterface
+// ============================================================================
+// PersonalizationV1
+// ============================================================================
+
+class PersonalizationV1 : public QObject, public WServerInterface
 {
     Q_OBJECT
 
@@ -95,19 +345,19 @@ class PersonalizationV1
 
 public:
     explicit PersonalizationV1(QObject *parent = nullptr);
-    ~PersonalizationV1();
+    ~PersonalizationV1() override;
 
-    void onWindowContextCreated(personalization_window_context_v1 *context);
-    void onWallpaperContextCreated(personalization_wallpaper_context_v1 *context);
-    void onCursorContextCreated(personalization_cursor_context_v1 *context);
-    void onAppearanceContextCreated(personalization_appearance_context_v1 *context);
-    void onFontContextCreated(personalization_font_context_v1 *context);
+    void onWindowContextCreated(PersonalizationWindowContextV1 *context);
+    void onWallpaperContextCreated(PersonalizationWallpaperContextV1 *context);
+    void onCursorContextCreated(PersonalizationCursorContextV1 *context);
+    void onAppearanceContextCreated(PersonalizationAppearanceContextV1 *context);
+    void onFontContextCreated(PersonalizationFontContextV1 *context);
 
     void onWindowPersonalizationChanged();
-    void onWallpaperCommit(personalization_wallpaper_context_v1 *context);
-    void onGetWallpapers(personalization_wallpaper_context_v1 *context);
+    void onWallpaperCommit(PersonalizationWallpaperContextV1 *context);
+    void onGetWallpapers(PersonalizationWallpaperContextV1 *context);
 
-    void onCursorCommit(personalization_cursor_context_v1 *context);
+    void onCursorCommit(PersonalizationCursorContextV1 *context);
 
     uid_t userId();
     void setUserId(uid_t uid);
@@ -124,7 +374,7 @@ public:
 
     QByteArrayView interfaceName() const override;
 
-    personalization_window_context_v1 *getWindowContext(WSurface *surface);
+    PersonalizationWindowContextV1 *getWindowContext(WSurface *surface);
 
     QString defaultWallpaper() const;
 
@@ -134,7 +384,7 @@ Q_SIGNALS:
     void lockscreenChanged();
     void cursorThemeChanged(const QString &name);
     void cursorSizeChanged(const QSize &size);
-    void windowContextCreated(personalization_window_context_v1 *context);
+    void windowContextCreated(PersonalizationWindowContextV1 *context);
 
 public Q_SLOTS:
     QString background(const QString &output, int workspaceId = 1);
@@ -148,17 +398,18 @@ protected:
     wl_global *global() const override;
 
 private:
-    void saveImage(personalization_wallpaper_context_v1 *context, const QString &prefix);
+    void saveImage(PersonalizationWallpaperContextV1 *context, const QString &prefix);
     void updateCacheWallpaperPath(uid_t uid);
     QString readWallpaperSettings(const QString &group, const QString &output, int workspaceId = 1);
 
     uid_t m_userId = 0;
     QString m_cacheDirectory;
     QString m_settingFile;
-    // TODO： use Dconfig
     QString m_iniMetaData;
-    treeland_personalization_manager_v1 *m_manager = nullptr;
-    QList<personalization_window_context_v1 *> m_windowContexts;
-    std::vector<personalization_appearance_context_v1 *> m_appearanceContexts;
-    std::vector<personalization_font_context_v1 *> m_fontContexts;
+    std::unique_ptr<PersonalizationManagerV1Private> d;
+    QList<PersonalizationWindowContextV1 *> m_windowContexts;
+    std::vector<PersonalizationAppearanceContextV1 *> m_appearanceContexts;
+    std::vector<PersonalizationFontContextV1 *> m_fontContexts;
+
+    friend class PersonalizationManagerV1Private;
 };

@@ -1,9 +1,9 @@
 // Copyright (C) 2024 UnionTech Software Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "capture.h"
+#include "captureinterfacev1.h"
+#include "qwayland-server-treeland-capture-unstable-v1.h"
 
-#include "modules/capture/impl/capturev1impl.h"
 #include "modules/item-selector/itemselector.h"
 #include "seat/helper.h"
 #include "surface/surfacewrapper.h"
@@ -23,6 +23,7 @@
 #include <qwcompositor.h>
 #include <qwdisplay.h>
 #include <qwlayershellv1.h>
+#include <qwbuffer.h>
 
 #include <QLoggingCategory>
 #include <QQueue>
@@ -31,6 +32,86 @@
 
 #include <utility>
 
+extern "C" {
+#define static
+#include "wlr/types/wlr_compositor.h"
+#undef static
+}
+
+WAYLIB_SERVER_USE_NAMESPACE
+QW_USE_NAMESPACE
+
+#define TREELAND_CAPTURE_MANAGER_V1_VERSION 1
+
+static QList<CaptureContextV1 *> s_captureContexts;
+static QList<CaptureFrameV1 *> s_captureFrames;
+static QList<CaptureSessionV1 *> s_captureSessions;
+
+// ============================================================================
+// Private class definitions
+// ============================================================================
+
+class CaptureManagerV1Private : public QtWaylandServer::treeland_capture_manager_v1
+{
+public:
+    explicit CaptureManagerV1Private();
+    wl_global *global() const;
+
+protected:
+    void destroy_global() override;
+    void get_context(Resource *resource, uint32_t context) override;
+};
+
+class CaptureContextV1Private : public QtWaylandServer::treeland_capture_context_v1
+{
+public:
+    explicit CaptureContextV1Private(CaptureContextV1 *_q, wl_client *client, uint32_t id, int version);
+    ~CaptureContextV1Private() override;
+
+    CaptureContextV1 *q = nullptr;
+
+    bool withCursor{ false };
+    bool freeze{ false };
+    uint32_t sourceHint{ 0 };
+    WAYLIB_SERVER_NAMESPACE::WSurface *mask{ nullptr };
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void select_source(Resource *resource, uint32_t source_hint, uint32_t freeze, uint32_t with_cursor, struct ::wl_resource *mask) override;
+    void capture(Resource *resource, uint32_t frame) override;
+    void create_session(Resource *resource, uint32_t session) override;
+};
+
+class CaptureFrameV1Private : public QtWaylandServer::treeland_capture_frame_v1
+{
+public:
+    explicit CaptureFrameV1Private(CaptureFrameV1 *_q, wl_client *client, uint32_t id, int version);
+    ~CaptureFrameV1Private() override;
+
+    CaptureFrameV1 *q = nullptr;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void copy(Resource *resource, struct ::wl_resource *buffer) override;
+};
+
+class CaptureSessionV1Private : public QtWaylandServer::treeland_capture_session_v1
+{
+public:
+    explicit CaptureSessionV1Private(CaptureSessionV1 *_q, wl_client *client, uint32_t id, int version);
+    ~CaptureSessionV1Private() override;
+
+    CaptureSessionV1 *q = nullptr;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void start(Resource *resource) override;
+    void frame_done(Resource *resource, uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_usec) override;
+};
+
 static inline QRectF scaledRect(const QRectF &rect, qreal devicePixelRatio)
 {
     return { rect.x() * devicePixelRatio,
@@ -38,6 +119,306 @@ static inline QRectF scaledRect(const QRectF &rect, qreal devicePixelRatio)
              rect.width() * devicePixelRatio,
              rect.height() * devicePixelRatio };
 }
+
+// ============================================================================
+// CaptureManagerV1Private
+// ============================================================================
+
+CaptureManagerV1Private::CaptureManagerV1Private()
+{
+}
+
+wl_global *CaptureManagerV1Private::global() const
+{
+    return m_global;
+}
+
+void CaptureManagerV1Private::destroy_global()
+{
+}
+
+void CaptureManagerV1Private::get_context(Resource *resource, uint32_t context)
+{
+    wl_resource *context_resource = wl_resource_create(resource->client(),
+                                                        &treeland_capture_context_v1_interface,
+                                                        resource->version(),
+                                                        context);
+    if (!context_resource) {
+        wl_client_post_no_memory(resource->client());
+        return;
+    }
+
+    // The context will be created by CaptureManagerV1
+}
+
+// ============================================================================
+// CaptureContextV1Private
+// ============================================================================
+
+CaptureContextV1Private::CaptureContextV1Private(CaptureContextV1 *_q,
+                                                 wl_client *client,
+                                                 uint32_t id,
+                                                 int version)
+    : QtWaylandServer::treeland_capture_context_v1()
+    , q(_q)
+{
+    auto *resource = wl_resource_create(client, &treeland_capture_context_v1_interface, version, id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+CaptureContextV1Private::~CaptureContextV1Private()
+{
+}
+
+void CaptureContextV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->selectInfoReady();
+    delete q;
+}
+
+void CaptureContextV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void CaptureContextV1Private::select_source(Resource *resource,
+                                            uint32_t source_hint,
+                                            uint32_t freeze,
+                                            uint32_t with_cursor,
+                                            struct ::wl_resource *mask)
+{
+    if (source_hint) {
+        this->sourceHint = source_hint;
+    } else {
+        this->sourceHint = 0x7; // Contains all source type
+    }
+    this->freeze = freeze;
+    this->withCursor = with_cursor;
+    if (mask) {
+        this->mask = WSurface::fromHandle(wlr_surface_from_resource(mask));
+        Q_ASSERT(this->mask);
+    }
+    Q_EMIT q->selectInfoReady();
+}
+
+void CaptureContextV1Private::capture(Resource *resource, uint32_t frame)
+{
+    wl_resource *frame_resource = wl_resource_create(resource->client(),
+                                                      &treeland_capture_frame_v1_interface,
+                                                      resource->version(),
+                                                      frame);
+    if (!frame_resource) {
+        wl_client_post_no_memory(resource->client());
+        return;
+    }
+
+    auto captureFrame = new CaptureFrameV1(this, resource->client(), frame, resource->version());
+    s_captureFrames.append(captureFrame);
+
+    QObject::connect(captureFrame, &QObject::destroyed, [captureFrame]() {
+        s_captureFrames.removeOne(captureFrame);
+    });
+}
+
+void CaptureContextV1Private::create_session(Resource *resource, uint32_t session)
+{
+    wl_resource *session_resource = wl_resource_create(resource->client(),
+                                                        &treeland_capture_session_v1_interface,
+                                                        resource->version(),
+                                                        session);
+    if (!session_resource) {
+        wl_client_post_no_memory(resource->client());
+        return;
+    }
+
+    auto captureSession = new CaptureSessionV1(this, resource->client(), session, resource->version());
+    s_captureSessions.append(captureSession);
+
+    QObject::connect(captureSession, &QObject::destroyed, [captureSession]() {
+        s_captureSessions.removeOne(captureSession);
+    });
+}
+
+// ============================================================================
+// CaptureFrameV1Private
+// ============================================================================
+
+CaptureFrameV1Private::CaptureFrameV1Private(CaptureFrameV1 *_q,
+                                             wl_client *client,
+                                             uint32_t id,
+                                             int version)
+    : QtWaylandServer::treeland_capture_frame_v1()
+    , q(_q)
+{
+    auto *resource = wl_resource_create(client, &treeland_capture_frame_v1_interface, version, id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+CaptureFrameV1Private::~CaptureFrameV1Private()
+{
+}
+
+void CaptureFrameV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void CaptureFrameV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void CaptureFrameV1Private::copy(Resource *resource, struct ::wl_resource *buffer)
+{
+    qw_buffer *qwBuffer = qw_buffer::try_from_resource(buffer);
+    if (!qwBuffer) {
+        wl_client_post_implementation_error(resource->client(), "Buffer not created!");
+        return;
+    }
+    Q_EMIT q->copy(qwBuffer);
+}
+
+// ============================================================================
+// CaptureSessionV1Private
+// ============================================================================
+
+CaptureSessionV1Private::CaptureSessionV1Private(CaptureSessionV1 *_q,
+                                                 wl_client *client,
+                                                 uint32_t id,
+                                                 int version)
+    : QtWaylandServer::treeland_capture_session_v1()
+    , q(_q)
+{
+    auto *resource = wl_resource_create(client, &treeland_capture_session_v1_interface, version, id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+CaptureSessionV1Private::~CaptureSessionV1Private()
+{
+}
+
+void CaptureSessionV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void CaptureSessionV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void CaptureSessionV1Private::start(Resource *resource)
+{
+    Q_EMIT q->start();
+}
+
+void CaptureSessionV1Private::frame_done(Resource *resource,
+                                         uint32_t tv_sec_hi,
+                                         uint32_t tv_sec_lo,
+                                         uint32_t tv_usec)
+{
+    Q_EMIT q->frameDone(tv_sec_hi, tv_sec_lo, tv_usec);
+}
+
+// ============================================================================
+// CaptureFrameV1
+// ============================================================================
+
+CaptureFrameV1::CaptureFrameV1(CaptureContextV1Private *context,
+                               wl_client *client,
+                               uint32_t id,
+                               int version)
+    : QObject(nullptr)
+    , d(new CaptureFrameV1Private(this, client, id, version))
+    , m_context(context)
+{
+}
+
+CaptureFrameV1::~CaptureFrameV1() = default;
+
+CaptureFrameV1Private *CaptureFrameV1::handle() const
+{
+    return d.get();
+}
+
+void CaptureFrameV1::sendBuffer(uint32_t format, uint32_t width, uint32_t height, uint32_t stride)
+{
+    d->send_buffer(format, width, height, stride);
+}
+
+void CaptureFrameV1::sendBufferDone()
+{
+    d->send_buffer_done();
+}
+
+void CaptureFrameV1::sendReady()
+{
+    d->send_ready();
+}
+
+void CaptureFrameV1::sendFailed()
+{
+    d->send_failed();
+}
+
+// ============================================================================
+// CaptureSessionV1
+// ============================================================================
+
+CaptureSessionV1::CaptureSessionV1(CaptureContextV1Private *context,
+                                   wl_client *client,
+                                   uint32_t id,
+                                   int version)
+    : QObject(nullptr)
+    , d(new CaptureSessionV1Private(this, client, id, version))
+    , m_context(context)
+{
+}
+
+CaptureSessionV1::~CaptureSessionV1() = default;
+
+CaptureSessionV1Private *CaptureSessionV1::handle() const
+{
+    return d.get();
+}
+
+wl_resource *CaptureSessionV1::resource() const
+{
+    return d->resource()->handle;
+}
+
+void CaptureSessionV1::sendProduceMoreCancel()
+{
+    d->send_cancel(QtWaylandServer::treeland_capture_session_v1::cancel_reason_temporary);
+}
+
+void CaptureSessionV1::sendSourceDestroyCancel()
+{
+    d->send_cancel(QtWaylandServer::treeland_capture_session_v1::cancel_reason_permanent);
+}
+
+void CaptureSessionV1::sendSourceResizeCancel()
+{
+    d->send_cancel(QtWaylandServer::treeland_capture_session_v1::cancel_reason_resizing);
+}
+
+// ============================================================================
+// CaptureContextV1
+// ============================================================================
 
 CaptureSource *CaptureContextV1::source() const
 {
@@ -48,12 +429,12 @@ static inline uint32_t captureSourceTypeToProtocol(CaptureSource::CaptureSourceT
 {
     switch (type) {
     case CaptureSource::Output:
-        return 0x1;
+        return QtWaylandServer::treeland_capture_context_v1::source_type_output;
     case CaptureSource::Window:
     case CaptureSource::Surface:
-        return 0x2;
+        return QtWaylandServer::treeland_capture_context_v1::source_type_window;
     case CaptureSource::Region:
-        return 0x4;
+        return QtWaylandServer::treeland_capture_context_v1::source_type_region;
     default:
         Q_UNREACHABLE_RETURN(0);
     }
@@ -75,8 +456,11 @@ void CaptureContextV1::setSource(CaptureSource *source, const QRect &captureRegi
             &CaptureSource::targetDestroyed,
             this,
             &CaptureContextV1::handleSourceDestroyed);
-    m_handle->sendSourceReady(this->captureRegion(),
-                              captureSourceTypeToProtocol(source->sourceType()));
+    d->send_source_ready(captureRegion.x(),
+                         captureRegion.y(),
+                         captureRegion.width(),
+                         captureRegion.height(),
+                         captureSourceTypeToProtocol(source->sourceType()));
     Q_EMIT sourceChanged();
 }
 
@@ -87,78 +471,58 @@ void CaptureContextV1::cancelSelect()
 
 WSurface *CaptureContextV1::mask() const
 {
-    return m_handle->mask;
+    return d->mask;
 }
 
 bool CaptureContextV1::freeze() const
 {
-    return m_handle->freeze;
+    return d->freeze;
 }
 
 bool CaptureContextV1::withCursor() const
 {
-    return m_handle->withCursor;
+    return d->withCursor;
 }
 
 CaptureSource::CaptureSourceHint CaptureContextV1::sourceHint() const
 {
-    return { m_handle->sourceHint };
+    return { d->sourceHint };
 }
 
-CaptureContextV1::CaptureContextV1(treeland_capture_context_v1 *h,
+CaptureContextV1::CaptureContextV1(CaptureContextV1Private *priv,
                                    WOutputRenderWindow *outputRenderWindow,
                                    QObject *parent)
     : QObject(parent)
-    , m_handle(h)
+    , d(priv)
     , m_outputRenderWindow(outputRenderWindow)
 {
-    connect(h, &treeland_capture_context_v1::selectSource, this, &CaptureContextV1::onSelectSource);
-    connect(h, &treeland_capture_context_v1::capture, this, &CaptureContextV1::onCapture);
-    connect(h, &treeland_capture_context_v1::newSession, this, &CaptureContextV1::onCreateSession);
 }
 
-void CaptureContextV1::onSelectSource()
+CaptureContextV1::~CaptureContextV1() = default;
+
+QPointer<CaptureSessionV1> CaptureContextV1::session() const
 {
-    auto context = qobject_cast<treeland_capture_context_v1 *>(sender());
-    Q_ASSERT(context); // Sender must be context.
-    Q_EMIT selectInfoReady();
+    return m_session;
 }
 
-void CaptureContextV1::onCapture(treeland_capture_frame_v1 *frame)
+QPointer<CaptureSource> CaptureContextV1::captureSource() const
 {
-    if (m_frame) {
-        wl_client_post_implementation_error(wl_resource_get_client(m_handle->resource),
-                                            "Cannot capture frame twice!");
-        return;
-    }
-    if (!m_captureSource) {
-        wl_client_post_implementation_error(wl_resource_get_client(m_handle->resource),
-                                            "Source is not ready.");
-        return;
-    }
-    m_frame = frame;
-    auto notifyBuffer = [this] {
-        m_frame->sendBuffer(
-            WTools::drmToShmFormat(WTools::toDrmFormat(m_captureSource->image().format())),
-            source()->cropRect().width(),
-            source()->cropRect().height(),
-            source()->cropRect().width() * 4);
-        m_frame->sendBufferDone();
-        connect(m_frame,
-                &treeland_capture_frame_v1::copy,
-                this,
-                &CaptureContextV1::handleFrameCopy,
-                Qt::UniqueConnection);
-        connect(m_frame, &treeland_capture_frame_v1::beforeDestroy, this, [this] {
-            m_frame = nullptr;
-        });
-    };
-    if (m_captureSource->imageValid()) {
-        notifyBuffer();
-    } else {
-        connect(m_captureSource, &CaptureSource::imageReady, this, notifyBuffer);
-    }
-    Q_EMIT finishSelect();
+    return m_captureSource;
+}
+
+QPointer<WOutputRenderWindow> CaptureContextV1::outputRenderWindow() const
+{
+    return m_outputRenderWindow;
+}
+
+void CaptureContextV1::sendSourceFailed(SourceFailure failure)
+{
+    d->send_source_failed(failure);
+}
+
+void CaptureContextV1::handleSourceDestroyed()
+{
+    sendSourceFailed(SourceDestroyed);
 }
 
 void CaptureContextV1::handleFrameCopy(QW_NAMESPACE::qw_buffer *buffer)
@@ -166,71 +530,7 @@ void CaptureContextV1::handleFrameCopy(QW_NAMESPACE::qw_buffer *buffer)
     if (m_captureSource) {
         m_captureSource->copyBuffer(buffer);
         m_frame->sendReady();
-    } else {
-        wl_client_post_implementation_error(wl_resource_get_client(m_handle->resource),
-                                            "Source is not ready, cannot capture.");
     }
-}
-
-void CaptureContextV1::sendSourceFailed(SourceFailure failure)
-{
-    m_handle->sendSourceFailed(failure);
-}
-
-void CaptureContextV1::onCreateSession(treeland_capture_session_v1 *session)
-{
-    if (m_session) {
-        wl_client_post_implementation_error(wl_resource_get_client(m_handle->resource),
-                                            "Cannot create session twice!");
-        return;
-    }
-    if (!m_captureSource) {
-        wl_client_post_implementation_error(wl_resource_get_client(m_handle->resource),
-                                            "Source is not ready.");
-        return;
-    }
-    m_session = session;
-    connect(m_session,
-            &treeland_capture_session_v1::start,
-            this,
-            &CaptureContextV1::handleSessionStart);
-    connect(m_session,
-            &treeland_capture_session_v1::frameDone,
-            this,
-            &CaptureContextV1::handleFrameDone);
-    connect(m_session, &treeland_capture_session_v1::beforeDestroy, this, [this] {
-        disconnect(outputRenderWindow(),
-                   &WOutputRenderWindow::renderEnd,
-                   this,
-                   &CaptureContextV1::handleRenderEnd);
-    });
-    ensureSourceSessionConnection();
-    Q_EMIT finishSelect();
-}
-
-void CaptureContextV1::ensureSourceSessionConnection()
-{
-    Q_ASSERT(session() && source());
-    connect(source(),
-            &CaptureSource::bufferDestroyed,
-            session(),
-            &treeland_capture_session_v1::sendProduceMoreCancel,
-            Qt::UniqueConnection);
-    connect(source(),
-            &CaptureSource::targetDestroyed,
-            session(),
-            &treeland_capture_session_v1::sendSourceDestroyCancel,
-            Qt::UniqueConnection);
-    connect(source(),
-            &CaptureSource::targetResized,
-            session(),
-            &treeland_capture_session_v1::sendSourceResizeCancel,
-            Qt::UniqueConnection);
-}
-
-void CaptureContextV1::handleSourceDestroyed()
-{
-    sendSourceFailed(SourceDestroyed);
 }
 
 void CaptureContextV1::handleSessionStart()
@@ -266,19 +566,24 @@ void CaptureContextV1::handleFrameDone(uint32_t tvSecHi, uint32_t tvSecLo, uint3
     }
 }
 
-QPointer<treeland_capture_session_v1> CaptureContextV1::session() const
+void CaptureContextV1::ensureSourceSessionConnection()
 {
-    return m_session;
-}
-
-QPointer<CaptureSource> CaptureContextV1::captureSource() const
-{
-    return m_captureSource;
-}
-
-QPointer<WOutputRenderWindow> CaptureContextV1::outputRenderWindow() const
-{
-    return m_outputRenderWindow;
+    Q_ASSERT(session() && source());
+    connect(source(),
+            &CaptureSource::bufferDestroyed,
+            session(),
+            &CaptureSessionV1::sendProduceMoreCancel,
+            Qt::UniqueConnection);
+    connect(source(),
+            &CaptureSource::targetDestroyed,
+            session(),
+            &CaptureSessionV1::sendSourceDestroyCancel,
+            Qt::UniqueConnection);
+    connect(source(),
+            &CaptureSource::targetResized,
+            session(),
+            &CaptureSessionV1::sendSourceResizeCancel,
+            Qt::UniqueConnection);
 }
 
 void CaptureContextV1::handleRenderEnd()
@@ -307,8 +612,10 @@ void CaptureContextV1::handleRenderEnd()
     } modifierUnion(m_currentFrameData.attribs.modifier);
 
     qCInfo(treelandCapture) << "Session:" << session();
-    qCInfo(treelandCapture) << "Session resource:" << session()->resource;
-    treeland_capture_session_v1_send_frame(session()->resource,
+    qCInfo(treelandCapture) << "Session resource:" << session()->resource();
+
+    // Use the C send functions from the generated protocol header
+    treeland_capture_session_v1_send_frame(session()->resource(),
                                            source->cropRect().x(),
                                            source->cropRect().y(),
                                            m_currentFrameData.attribs.width,
@@ -320,7 +627,7 @@ void CaptureContextV1::handleRenderEnd()
                                            modifierUnion.mod_low,
                                            m_currentFrameData.attribs.n_planes);
     for (auto i = 0; i < m_currentFrameData.attribs.n_planes; ++i) {
-        treeland_capture_session_v1_send_object(session()->resource,
+        treeland_capture_session_v1_send_object(session()->resource(),
                                                 i,
                                                 m_currentFrameData.attribs.fd[i],
                                                 m_currentFrameData.attribs.stride[i]
@@ -330,7 +637,7 @@ void CaptureContextV1::handleRenderEnd()
                                                 i);
     }
     gettimeofday(&m_currentFrameData.readyAt.tv, nullptr);
-    treeland_capture_session_v1_send_ready(session()->resource,
+    treeland_capture_session_v1_send_ready(session()->resource(),
                                            m_currentFrameData.readyAt.tvSecHi,
                                            m_currentFrameData.readyAt.tvSecLo,
                                            m_currentFrameData.readyAt.tvUsec);
@@ -338,11 +645,13 @@ void CaptureContextV1::handleRenderEnd()
 
 CaptureManagerV1::CaptureManagerV1(QObject *parent)
     : QObject(parent)
-    , m_manager(nullptr)
+    , d(new CaptureManagerV1Private())
     , m_captureContextModel(new CaptureContextModel(this))
     , m_contextInSelection(nullptr)
 {
 }
+
+CaptureManagerV1::~CaptureManagerV1() = default;
 
 void CaptureManagerV1::setSelector(CaptureSourceSelector *selector)
 {
@@ -367,7 +676,7 @@ void CaptureManagerV1::setOutputRenderWindow(WOutputRenderWindow *renderWindow)
 
 QByteArrayView CaptureManagerV1::interfaceName() const
 {
-    return treeland_capture_manager_v1_interface.name;
+    return d->interfaceName();
 }
 
 QPointer<WToplevelSurface> CaptureManagerV1::maskShellSurface() const
@@ -382,31 +691,18 @@ QPointer<SurfaceWrapper> CaptureManagerV1::maskSurfaceWrapper() const
 
 void CaptureManagerV1::create(WServer *server)
 {
-    m_manager = new treeland_capture_manager_v1(server->handle()->handle(), this);
-    connect(m_manager,
-            &treeland_capture_manager_v1::newCaptureContext,
-            this,
-            [this](treeland_capture_context_v1 *context) {
-                auto quickContext = new CaptureContextV1(context, outputRenderWindow(), this);
-                m_captureContextModel->addContext(quickContext);
-                connect(context,
-                        &treeland_capture_context_v1::beforeDestroy,
-                        quickContext,
-                        [this, quickContext] {
-                            m_captureContextModel->removeContext(quickContext);
-                            handleContextBeforeDestroy(quickContext);
-                            quickContext->deleteLater();
-                        });
-                connect(quickContext,
-                        &CaptureContextV1::selectInfoReady,
-                        this,
-                        &CaptureManagerV1::onCaptureContextSelectSource);
-            });
+    d->init(server->handle()->handle(), TREELAND_CAPTURE_MANAGER_V1_VERSION);
 }
 
 void CaptureManagerV1::destroy([[maybe_unused]] WServer *server)
 {
+    d.reset();
     this->disconnect();
+}
+
+wl_global *CaptureManagerV1::global() const
+{
+    return d->global();
 }
 
 void CaptureManagerV1::onCaptureContextSelectSource()
@@ -602,11 +898,6 @@ void CaptureSourceSelector::updateCursorShape()
     } else {
         setCursor(Qt::ArrowCursor);
     }
-}
-
-wl_global *CaptureManagerV1::global() const
-{
-    return m_manager->global;
 }
 
 QQuickItem *CaptureSourceSelector::hoveredItem() const
@@ -888,6 +1179,34 @@ void CaptureSourceSelector::handleItemSelectorSelectionRegionChanged()
 bool CaptureSource::imageValid() const
 {
     return !m_image.isNull();
+}
+
+CaptureSource::CaptureSource(QQuickItem *item, WTextureProviderProvider *provider, qreal devicePixelRatio, QObject *parent)
+    : QObject(parent)
+    , m_devicePixelRatio(devicePixelRatio)
+{
+    m_sourceList.push_back({ { item }, provider });
+    connect(item, &QQuickItem::destroyed, this, &CaptureSource::targetDestroyed);
+    connect(item, &QQuickItem::widthChanged, this, &CaptureSource::targetResized);
+    connect(item, &QQuickItem::heightChanged, this, &CaptureSource::targetResized);
+}
+
+CaptureSource::CaptureSource(QQuickItem *item, qreal devicePixelRatio, QObject *parent)
+    : CaptureSource(item, dynamic_cast<WTextureProviderProvider *>(item), devicePixelRatio, parent)
+{
+}
+
+void CaptureSource::addTarget(QQuickItem *item, WTextureProviderProvider *provider)
+{
+    m_sourceList.push_back({ { item }, provider });
+    connect(item, &QQuickItem::destroyed, this, &CaptureSource::targetDestroyed);
+    connect(item, &QQuickItem::widthChanged, this, &CaptureSource::targetResized);
+    connect(item, &QQuickItem::heightChanged, this, &CaptureSource::targetResized);
+}
+
+void CaptureSource::addTarget(QQuickItem *item)
+{
+    addTarget(item, dynamic_cast<WTextureProviderProvider *>(item));
 }
 
 QImage CaptureSource::image() const

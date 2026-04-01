@@ -5,7 +5,7 @@
 
 #include "common/treelandlogging.h"
 #include "core/rootsurfacecontainer.h"
-#include "modules/capture/capture.h"
+#include "modules/capture/captureinterfacev1.h"
 #include "output/output.h"
 #include "surface/surfacewrapper.h"
 #include "workspace/workspace.h"

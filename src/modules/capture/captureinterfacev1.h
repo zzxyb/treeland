@@ -3,9 +3,8 @@
 
 #pragma once
 
-#include "modules/capture/impl/capturev1impl.h"
-#include "modules/item-selector/itemselector.h"
 #include "surface/surfacecontainer.h"
+#include "modules/item-selector/itemselector.h"
 
 #include <wglobal.h>
 #include <woutput.h>
@@ -33,11 +32,6 @@ WAYLIB_SERVER_END_NAMESPACE
 
 WAYLIB_SERVER_USE_NAMESPACE
 class SurfaceWrapper;
-class ItemSelector;
-
-template<typename T>
-concept IsCaptureSourceTarget =
-    std::is_base_of_v<QQuickItem, T> && std::is_base_of_v<WTextureProviderProvider, T>;
 
 class CaptureSource : public QObject
 {
@@ -53,26 +47,8 @@ public:
     Q_FLAG(CaptureSourceType)
     Q_DECLARE_FLAGS(CaptureSourceHint, CaptureSourceType)
 
-    template<IsCaptureSourceTarget T>
-    CaptureSource(T *ptr, qreal devicePixelRatio, QObject *parent)
-        : QObject(parent)
-        , m_devicePixelRatio(devicePixelRatio)
-    {
-        m_sourceList.push_back(
-            { { static_cast<QQuickItem *>(ptr) }, static_cast<WTextureProviderProvider *>(ptr) });
-        connect(m_sourceList.first().first.data(),
-                &QQuickItem::destroyed,
-                this,
-                &CaptureSource::targetDestroyed);
-        connect(m_sourceList.first().first.data(),
-                &QQuickItem::widthChanged,
-                this,
-                &CaptureSource::targetResized);
-        connect(m_sourceList.first().first.data(),
-                &QQuickItem::heightChanged,
-                this,
-                &CaptureSource::targetResized);
-    }
+    CaptureSource(QQuickItem *item, WTextureProviderProvider *provider, qreal devicePixelRatio, QObject *parent);
+    CaptureSource(QQuickItem *item, qreal devicePixelRatio, QObject *parent);
 
 Q_SIGNALS:
     void imageReady();
@@ -115,24 +91,8 @@ public:
 protected:
     virtual qw_buffer *internalBuffer() = 0;
 
-    template<IsCaptureSourceTarget T>
-    void addTarget(T *target)
-    {
-        m_sourceList.push_back({ { static_cast<QQuickItem *>(target) },
-                                 static_cast<WTextureProviderProvider *>(target) });
-        connect(m_sourceList.last().first.data(),
-                &QQuickItem::destroyed,
-                this,
-                &CaptureSource::targetDestroyed);
-        connect(m_sourceList.last().first.data(),
-                &QQuickItem::widthChanged,
-                this,
-                &CaptureSource::targetResized);
-        connect(m_sourceList.last().first.data(),
-                &QQuickItem::heightChanged,
-                this,
-                &CaptureSource::targetResized);
-    }
+    void addTarget(QQuickItem *item, WTextureProviderProvider *provider);
+    void addTarget(QQuickItem *item);
 
     friend QDebug operator<<(QDebug debug, CaptureSource &captureSource);
     QImage m_image;
@@ -144,7 +104,81 @@ protected:
 #define CaptureSource_iid "org.deepin.treeland.CaptureSource"
 Q_DECLARE_INTERFACE(CaptureSource, CaptureSource_iid)
 
+// Forward declarations for private classes
+class CaptureManagerV1Private;
+class CaptureContextV1Private;
+class CaptureFrameV1Private;
+class CaptureSessionV1Private;
+
+// Forward declarations for public classes
 class CaptureContextV1;
+class CaptureFrameV1;
+class CaptureSessionV1;
+
+// ============================================================================
+// CaptureFrameV1
+// ============================================================================
+
+class CaptureFrameV1 : public QObject
+{
+    Q_OBJECT
+public:
+    explicit CaptureFrameV1(CaptureContextV1Private *context, wl_client *client, uint32_t id, int version);
+    ~CaptureFrameV1() override;
+
+    CaptureFrameV1Private *handle() const;
+
+    void sendBuffer(uint32_t format, uint32_t width, uint32_t height, uint32_t stride);
+    void sendBufferDone();
+    void sendReady();
+    void sendFailed();
+
+Q_SIGNALS:
+    void copy(QW_NAMESPACE::qw_buffer *buffer);
+    void beforeDestroy();
+
+private:
+    std::unique_ptr<CaptureFrameV1Private> d;
+    CaptureContextV1Private *m_context;
+
+    friend class CaptureFrameV1Private;
+    friend class CaptureContextV1;
+};
+
+// ============================================================================
+// CaptureSessionV1
+// ============================================================================
+
+class CaptureSessionV1 : public QObject
+{
+    Q_OBJECT
+public:
+    explicit CaptureSessionV1(CaptureContextV1Private *context, wl_client *client, uint32_t id, int version);
+    ~CaptureSessionV1() override;
+
+    CaptureSessionV1Private *handle() const;
+    wl_resource *resource() const;
+
+    void sendProduceMoreCancel();
+    void sendSourceDestroyCancel();
+    void sendSourceResizeCancel();
+
+Q_SIGNALS:
+    void beforeDestroy();
+    void start();
+    void frameDone(uint32_t tvSecHi, uint32_t tvSecLo, uint32_t tvUsec);
+
+private:
+    std::unique_ptr<CaptureSessionV1Private> d;
+    CaptureContextV1Private *m_context;
+
+    friend class CaptureSessionV1Private;
+    friend class CaptureContextV1;
+};
+
+// ============================================================================
+// CaptureContextModel
+// ============================================================================
 
 class CaptureContextModel : public QAbstractListModel
 {
@@ -166,6 +200,10 @@ public:
 private:
     QList<CaptureContextV1 *> m_captureContexts;
 };
+
+// ============================================================================
+// CaptureContextV1
+// ============================================================================
 
 class CaptureContextV1 : public QObject
 {
@@ -196,6 +234,8 @@ public:
         bool canceled{ false };
     };
 
+    ~CaptureContextV1() override;
+
     CaptureSource *source() const;
     void setSource(CaptureSource *source, const QRect &captureRegion);
 
@@ -205,7 +245,7 @@ public:
     bool freeze() const;
     bool withCursor() const;
     CaptureSource::CaptureSourceHint sourceHint() const;
-    QPointer<treeland_capture_session_v1> session() const;
+    QPointer<CaptureSessionV1> session() const;
     QPointer<CaptureSource> captureSource() const;
     QPointer<WOutputRenderWindow> outputRenderWindow() const;
 
@@ -218,9 +258,6 @@ public:
     };
     Q_ENUM(SourceFailure)
 
-    CaptureContextV1(treeland_capture_context_v1 *h,
-                     WOutputRenderWindow *outputRenderWindow,
-                     QObject *parent = nullptr);
     void sendSourceFailed(SourceFailure failure);
 
     inline QRect captureRegion() const
@@ -234,9 +271,10 @@ Q_SIGNALS:
     void selectInfoReady();
 
 private:
-    void onSelectSource();
-    void onCapture(treeland_capture_frame_v1 *frame);
-    void onCreateSession(treeland_capture_session_v1 *session);
+    explicit CaptureContextV1(CaptureContextV1Private *priv,
+                              WOutputRenderWindow *outputRenderWindow,
+                              QObject *parent = nullptr);
+
     void handleFrameCopy(QW_NAMESPACE::qw_buffer *buffer);
     void handleSessionStart();
     void handleFrameDone(uint32_t tvSecHi, uint32_t tvSecLo, uint32_t tvUsec);
@@ -245,15 +283,26 @@ private:
     void ensureSourceSessionConnection();
     void handleSourceDestroyed();
 
-    treeland_capture_context_v1 *const m_handle;
+    std::unique_ptr<CaptureContextV1Private> d;
     CaptureSource *m_captureSource{ nullptr };
-    QPointer<treeland_capture_frame_v1> m_frame{ nullptr };
-    QPointer<treeland_capture_session_v1> m_session{ nullptr };
+    QPointer<CaptureFrameV1> m_frame{ nullptr };
+    QPointer<CaptureSessionV1> m_session;
     const QPointer<WOutputRenderWindow> m_outputRenderWindow;
     FrameData m_currentFrameData{};
     QRect m_captureRegion;
+
+    friend class CaptureContextV1Private;
+    friend class CaptureFrameV1Private;
+    friend class CaptureSessionV1Private;
+    friend class CaptureManagerV1Private;
 };
+
+// ============================================================================
+// CaptureManagerV1
+// ============================================================================
+
 class CaptureSourceSelector;
+class ToolBarModel;
 
 class CaptureManagerV1
     : public QObject
@@ -264,6 +313,7 @@ class CaptureManagerV1
 
 public:
     explicit CaptureManagerV1(QObject *parent = nullptr);
+    ~CaptureManagerV1() override;
 
     CaptureContextModel *contextModel() const
     {
@@ -300,11 +350,11 @@ protected:
 
 private Q_SLOTS:
     void onCaptureContextSelectSource();
-    void freezeAllCapturedSurface(bool freeze, WAYLIB_SERVER_NAMESPACE::WSurface *maskItem);
+    void freezeAllCapturedSurface(bool freeze, WAYLIB_SERVER_NAMESPACE::WSurface *mask);
     void handleContextBeforeDestroy(CaptureContextV1 *context);
 
 private:
-    treeland_capture_manager_v1 *m_manager;
+    std::unique_ptr<CaptureManagerV1Private> d;
     CaptureContextModel *m_captureContextModel;
     CaptureContextV1 *m_contextInSelection;
     WOutputRenderWindow *m_outputRenderWindow;
@@ -313,6 +363,10 @@ private:
     QPointer<SurfaceWrapper> m_maskSurfaceWrapper;
     CaptureSourceSelector *m_selector;
 };
+
+// ============================================================================
+// CaptureSourceSurface
+// ============================================================================
 
 class CaptureSourceSurface : public CaptureSource
 {
@@ -328,6 +382,10 @@ private:
     const QPointer<WSurfaceItemContent> m_surfaceItemContent;
 };
 
+// ============================================================================
+// CaptureSourceOutput
+// ============================================================================
+
 class CaptureSourceOutput : public CaptureSource
 {
     Q_OBJECT
@@ -341,6 +399,10 @@ public:
 private:
     const QPointer<WOutputViewport> m_outputViewport;
 };
+
+// ============================================================================
+// CaptureSourceRegion
+// ============================================================================
 
 class CaptureSourceRegion : public CaptureSource
 {
@@ -356,7 +418,10 @@ public:
 private:
     QList<QPair<QPointer<WOutputViewport>, QRect>> m_viewportRegions;
 };
-class ToolBarModel;
+
+// ============================================================================
+// CaptureSourceSelector
+// ============================================================================
 
 class CaptureSourceSelector : public SurfaceContainer
 {
@@ -444,6 +509,10 @@ private:
     WWrapPointer<SurfaceWrapper> m_canvas{};
     ToolBarModel *m_toolBarModel{ nullptr };
 };
+
+// ============================================================================
+// ToolBarModel
+// ============================================================================
 
 class ToolBarModel : public QAbstractListModel
 {

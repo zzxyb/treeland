@@ -5,7 +5,7 @@
 #include "seat/helper.h"
 #include "shortcutcontroller.h"
 #include "workspace/workspace.h"
-#include "modules/window-management/windowmanagement.h"
+#include "modules/window-management/windowmanagementinterfacev1.h"
 #include "core/rootsurfacecontainer.h"
 #include "surface/surfacewrapper.h"
 #include "utils/fpsdisplaymanager.h"
@@ -72,10 +72,10 @@ void ShortcutRunner::onActionTrigger(ShortcutAction action, const QString &name,
         if (helper->currentMode() == Helper::CurrentMode::Multitaskview) {
             break;
         }
-        if (helper->m_showDesktop == WindowManagementV1::DesktopState::Normal)
-            helper->m_windowManagement->setDesktopState(WindowManagementV1::DesktopState::Show);
-        else if (helper->m_showDesktop == WindowManagementV1::DesktopState::Show)
-            helper->m_windowManagement->setDesktopState(WindowManagementV1::DesktopState::Normal);
+        if (helper->m_showDesktop == WindowManagementInterfaceV1::DesktopState::Normal)
+            helper->m_windowManagement->setDesktopState(WindowManagementInterfaceV1::DesktopState::Show);
+        else if (helper->m_showDesktop == WindowManagementInterfaceV1::DesktopState::Show)
+            helper->m_windowManagement->setDesktopState(WindowManagementInterfaceV1::DesktopState::Normal);
         break;
     case ShortcutAction::Maximize: {
         auto surface = helper->activatedSurface();

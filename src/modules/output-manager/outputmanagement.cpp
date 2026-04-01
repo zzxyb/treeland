@@ -3,11 +3,14 @@
 
 #include "qwayland-server-treeland-output-manager-v1.h"
 
+#include <qwdisplay.h>
+
 #include "outputmanagement.h"
 #include "outputconfig.hpp"
 #include "rootsurfacecontainer.h"
 #include "helper.h"
 #include "output.h"
+
 #include <WOutput>
 
 #define TREELAND_OUTPUT_MANAGER_V1_VERSION 2

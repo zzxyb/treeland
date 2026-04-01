@@ -5,8 +5,8 @@
 
 #include "core/qmlengine.h"
 #include "modules/shortcut/shortcutmanager.h"
-#include "modules/virtual-output/virtualoutputmanager.h"
-#include "modules/window-management/windowmanagement.h"
+#include "modules/virtual-output/virtualoutputmanagerinterfacev1.h"
+#include "modules/window-management/windowmanagementinterfacev1.h"
 #include "utils/fpsdisplaymanager.h"
 #include "modules/wallpaper/wallpapermanagerinterfacev1.h"
 #include "modules/wallpaper/wallpapernotifierinterfacev1.h"
@@ -34,7 +34,7 @@ Q_MOC_INCLUDE(<wlayersurface.h>)
 Q_MOC_INCLUDE(<wtoplevelsurface.h>)
 Q_MOC_INCLUDE(<wxdgsurface.h>)
 Q_MOC_INCLUDE("core/rootsurfacecontainer.h")
-Q_MOC_INCLUDE("modules/capture/capture.h")
+Q_MOC_INCLUDE("modules/capture/captureinterfacev1.h")
 Q_MOC_INCLUDE("surface/surfacewrapper.h")
 Q_MOC_INCLUDE("workspace/workspace.h")
 Q_MOC_INCLUDE("treelandconfig.hpp")
@@ -97,7 +97,7 @@ QW_USE_NAMESPACE
 class CaptureSourceSelector;
 class DDEShellManagerInterfaceV1;
 class DDMInterfaceV1;
-class ForeignToplevelV1;
+class ForeignToplevelManagerInterfaceV1;
 class FpsDisplayManager;
 class GreeterProxy;
 class ILockScreen;
@@ -125,9 +125,9 @@ class TreelandConfig;
 class TreelandUserConfig;
 class treeland_window_picker_v1;
 class UserModel;
-class VirtualOutputV1;
-class WallpaperColorV1;
-class WindowManagementV1;
+class VirtualOutputManagerInterfaceV1;
+class WallpaperColorInterfaceV1;
+class WindowManagementInterfaceV1;
 class WindowPickerInterface;
 class WallpaperManager;
 class WallpaperItem;
@@ -209,7 +209,7 @@ public:
 
     bool toggleDebugMenuBar();
 
-    WindowManagementV1::DesktopState showDesktopState() const;
+    WindowManagementInterfaceV1::DesktopState showDesktopState() const;
 
     Q_INVOKABLE bool isLaunchpad(WLayerSurface *surface) const;
     Q_INVOKABLE void setLaunchpadMapped(WOutput *output, bool mapped);
@@ -301,8 +301,8 @@ private:
     void onOutputTestOrApply(qw_output_configuration_v1 *config, bool onlyTest);
     void onSetOutputPowerMode(wlr_output_power_v1_set_mode_event *event);
     void onNewIdleInhibitor(wlr_idle_inhibitor_v1 *inhibitor);
-    void onSetCopyOutput(treeland_virtual_output_v1 *virtual_output);
-    void onRestoreCopyOutput(treeland_virtual_output_v1 *virtual_output);
+    void onSetCopyOutput(VirtualOutputInterfaceV1 *interface);
+    void onRestoreCopyOutput(VirtualOutputInterfaceV1 *interface);
     void onSurfaceWrapperAdded(SurfaceWrapper *wrapper);
     void onSurfaceWrapperAboutToRemove(SurfaceWrapper *wrapper);
     void handleRequestDrag([[maybe_unused]] WSurface *surface);
@@ -391,13 +391,13 @@ private:
     WExtForeignToplevelListV1 *m_extForeignToplevelListV1 = nullptr;
     ShortcutManagerV2 *m_shortcutManager = nullptr;
     PersonalizationV1 *m_personalization = nullptr;
-    WallpaperColorV1 *m_wallpaperColorV1 = nullptr;
+    WallpaperColorInterfaceV1 *m_wallpaperColorV1 = nullptr;
     WOutputManagerV1 *m_outputManager = nullptr;
-    WindowManagementV1 *m_windowManagement = nullptr;
-    WindowManagementV1::DesktopState m_showDesktop = WindowManagementV1::DesktopState::Normal;
+    WindowManagementInterfaceV1 *m_windowManagement = nullptr;
+    WindowManagementInterfaceV1::DesktopState m_showDesktop = WindowManagementInterfaceV1::DesktopState::Normal;
     DDEShellManagerInterfaceV1 *m_ddeShellV1 = nullptr;
     PrelaunchSplash *m_prelaunchSplash = nullptr; // treeland prelaunch splash protocol
-    VirtualOutputV1 *m_virtualOutput = nullptr;
+    VirtualOutputManagerInterfaceV1 *m_virtualOutput = nullptr;
     OutputManagerV1 *m_outputManagerV1 = nullptr;
     DDMInterfaceV1 *m_ddmInterfaceV1 = nullptr;
     ScreensaverInterfaceV1 *m_screensaverInterfaceV1 = nullptr;

@@ -29,7 +29,7 @@
 #include "input/inputdevice.h"
 #include "interfaces/multitaskviewinterface.h"
 #include "modules/app-id-resolver/appidresolver.h"
-#include "modules/capture/capture.h"
+#include "modules/capture/captureinterfacev1.h"
 #include "modules/dde-shell/ddeshellattached.h"
 #include "modules/dde-shell/ddeshellmanagerinterfacev1.h"
 #include "modules/ddm/ddminterfacev1.h"
@@ -41,7 +41,7 @@
 #include "modules/shortcut/shortcutcontroller.h"
 #include "modules/shortcut/shortcutmanager.h"
 #include "modules/shortcut/shortcutrunner.h"
-#include "modules/wallpaper-color/wallpapercolor.h"
+#include "modules/wallpaper-color/wallpapercolorinterfacev1.h"
 #include "output/outputconfigstate.h"
 #include "output/output.h"
 #include "output/outputlifecyclemanager.h"
@@ -950,10 +950,10 @@ void Helper::updateIdleInhibitor()
 
 void Helper::onShowDesktop()
 {
-    WindowManagementV1::DesktopState s = m_windowManagement->desktopState();
+    WindowManagementInterfaceV1::DesktopState s = m_windowManagement->desktopState();
     if (m_showDesktop == s
-        || (s != WindowManagementV1::DesktopState::Normal
-            && s != WindowManagementV1::DesktopState::Show))
+        || (s != WindowManagementInterfaceV1::DesktopState::Normal
+            && s != WindowManagementInterfaceV1::DesktopState::Show))
         return;
 
     m_showDesktop = s;
@@ -962,34 +962,34 @@ void Helper::onShowDesktop()
         if (surface->isMinimized()) {
             continue;
         }
-        if (s == WindowManagementV1::DesktopState::Normal) {
+        if (s == WindowManagementInterfaceV1::DesktopState::Normal) {
             surface->startShowDesktopAnimation(true);
-        } else if (s == WindowManagementV1::DesktopState::Show) {
+        } else if (s == WindowManagementInterfaceV1::DesktopState::Show) {
             surface->startShowDesktopAnimation(false);
         }
     }
 }
 
-void Helper::onSetCopyOutput(treeland_virtual_output_v1 *virtual_output)
+void Helper::onSetCopyOutput(VirtualOutputInterfaceV1 *interface)
 {
     Output *mirrorOutput = nullptr;
     for (Output *output : m_outputList) {
-        if (!virtual_output->outputList.contains(output->output()->name())) {
+        if (!interface->outputList().contains(output->output()->name())) {
             QString screen = output->output()->name() + " does not exist!";
-            virtual_output->send_error(TREELAND_VIRTUAL_OUTPUT_V1_ERROR_INVALID_OUTPUT,
-                                       screen.toLocal8Bit().data());
+            interface->sendError(VirtualOutputInterfaceV1::INVALID_OUTPUT,
+                                       screen);
             return;
         }
 
         if (!output->isPrimary()) {
             QString screen =
                 output->output()->name() + " is already a copy screen, invalid setting!";
-            virtual_output->send_error(TREELAND_VIRTUAL_OUTPUT_V1_ERROR_INVALID_OUTPUT,
-                                       screen.toLocal8Bit().data());
+            interface->sendError(VirtualOutputInterfaceV1::INVALID_OUTPUT,
+                                       screen);
             return;
         }
 
-        if (output->output()->name() == virtual_output->outputList.at(0))
+        if (output->output()->name() == interface->outputList().at(0))
             mirrorOutput = output;
     }
 
@@ -1014,14 +1014,14 @@ void Helper::onSetCopyOutput(treeland_virtual_output_v1 *virtual_output)
     moveSurfacesToOutput(surfaces, mirrorOutput, nullptr);
 }
 
-void Helper::onRestoreCopyOutput(treeland_virtual_output_v1 *virtual_output)
+void Helper::onRestoreCopyOutput(VirtualOutputInterfaceV1 *interface)
 {
-    const QString targetName = virtual_output->outputList.at(0);
+    const QString targetName = interface->outputList().at(0);
     if (!std::any_of(m_outputList.constBegin(), m_outputList.constEnd(),
                      [&targetName](const Output *output) { return output->output()->name() == targetName; })) {
-        virtual_output->send_error(
-            TREELAND_VIRTUAL_OUTPUT_V1_ERROR_INVALID_OUTPUT,
-            qPrintable(QString("Target output %1 does not exist!").arg(targetName))
+        interface->sendError(
+            VirtualOutputInterfaceV1::INVALID_OUTPUT,
+            QString("Target output %1 does not exist!").arg(targetName)
         );
         return;
     }
@@ -1313,9 +1313,9 @@ void Helper::init(Treeland::Treeland *treeland)
             &RootSurfaceContainer::primaryOutputChanged,
             m_outputManagerV1,
             &OutputManagerV1::onPrimaryOutputChanged);
-    m_wallpaperColorV1 = m_server->attach<WallpaperColorV1>();
-    m_windowManagement = m_server->attach<WindowManagementV1>();
-    m_virtualOutput = m_server->attach<VirtualOutputV1>();
+    m_wallpaperColorV1 = m_server->attach<WallpaperColorInterfaceV1>();
+    m_windowManagement = m_server->attach<WindowManagementInterfaceV1>();
+    m_virtualOutput = m_server->attach<VirtualOutputManagerInterfaceV1>();
 
     auto captureManagerV1 = m_server->attach<CaptureManagerV1>();
     captureManagerV1->setOutputRenderWindow(m_renderWindow);
@@ -1377,17 +1377,17 @@ void Helper::init(Treeland::Treeland *treeland)
     }
 
     connect(m_windowManagement,
-            &WindowManagementV1::desktopStateChanged,
+            &WindowManagementInterfaceV1::desktopStateChanged,
             this,
             &Helper::onShowDesktop);
 
     connect(m_virtualOutput,
-            &VirtualOutputV1::requestCreateVirtualOutput,
+            &VirtualOutputManagerInterfaceV1::requestCreateVirtualOutput,
             this,
             &Helper::onSetCopyOutput);
 
     connect(m_virtualOutput,
-            &VirtualOutputV1::destroyVirtualOutput,
+            &VirtualOutputManagerInterfaceV1::destroyVirtualOutput,
             this,
             &Helper::onRestoreCopyOutput);
 
@@ -2119,9 +2119,9 @@ void Helper::setActivatedSurface(SurfaceWrapper *newActivateSurface)
         m_activatedSurface->setActivate(false);
 
     if (newActivateSurface) {
-        if (m_showDesktop == WindowManagementV1::DesktopState::Show) {
-            m_showDesktop = WindowManagementV1::DesktopState::Normal;
-            m_windowManagement->setDesktopState(WindowManagementV1::DesktopState::Normal);
+        if (m_showDesktop == WindowManagementInterfaceV1::DesktopState::Show) {
+            m_showDesktop = WindowManagementInterfaceV1::DesktopState::Normal;
+            m_windowManagement->setDesktopState(WindowManagementInterfaceV1::DesktopState::Normal);
             newActivateSurface->setHideByShowDesk(true);
         }
 
@@ -2375,7 +2375,7 @@ bool Helper::toggleDebugMenuBar()
     return ok;
 }
 
-WindowManagementV1::DesktopState Helper::showDesktopState() const
+WindowManagementInterfaceV1::DesktopState Helper::showDesktopState() const
 {
     return m_showDesktop;
 }
@@ -2565,9 +2565,9 @@ void Helper::handleWhellValueChanged(const QInputEvent *event)
 
 void Helper::restoreFromShowDesktop(SurfaceWrapper *activeSurface)
 {
-    if (m_showDesktop == WindowManagementV1::DesktopState::Show) {
-        m_showDesktop = WindowManagementV1::DesktopState::Normal;
-        m_windowManagement->setDesktopState(WindowManagementV1::DesktopState::Normal);
+    if (m_showDesktop == WindowManagementInterfaceV1::DesktopState::Show) {
+        m_showDesktop = WindowManagementInterfaceV1::DesktopState::Normal;
+        m_windowManagement->setDesktopState(WindowManagementInterfaceV1::DesktopState::Normal);
         if (activeSurface) {
             activeSurface->requestCancelMinimize();
         }

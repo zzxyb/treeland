@@ -5,11 +5,18 @@
 #include "treeland-screensaver-v1-protocol.h"
 #include "helper.h"
 
+#include <qwdisplay.h>
+
 #include <wayland-server.h>
 #include <wayland-util.h>
 #include <QDebug>
 
 // request implementation
+
+static void destroy([[maybe_unused]] struct wl_client *client,
+			[[maybe_unused]] struct wl_resource *resource) {
+
+}
 
 static void inhibit([[maybe_unused]] struct wl_client *client, struct wl_resource *resource, const char *appName, const char *reason) {
     auto screensaver = static_cast<ScreensaverInterfaceV1 *>(wl_resource_get_user_data(resource));
@@ -22,8 +29,9 @@ static void uninhibit([[maybe_unused]] struct wl_client *client, struct wl_resou
 }
 
 static const struct treeland_screensaver_v1_interface treeland_screensaver_impl {
-    .inhibit = inhibit,
+    .destroy = destroy,
     .uninhibit = uninhibit,
+    .inhibit = inhibit,
 };
 
 // wayland object binding

@@ -12,8 +12,8 @@ qt_add_qml_module(test-capture
     URI capture
     VERSION 2.0
     SOURCES
-    capture.h
-    capture.cpp
+    captureinterfacev1.h
+    captureinterfacev1.cpp
     subwindow.h
     subwindow.cpp
     player.h

@@ -4,13 +4,11 @@
 #include "personalizationmanager.h"
 #include "surfacewrapper.h"
 
+#include "modules/personalization/qwayland-server-treeland-personalization-manager-v1.h"
+
 #include "seat/helper.h"
-#include "treeland-personalization-manager-protocol.h"
 #include "common/treelandlogging.h"
 #include "treelanduserconfig.hpp"
-#include "modules/personalization/impl/appearance_impl.h"
-#include "modules/personalization/impl/font_impl.h"
-#include "modules/personalization/impl/personalization_manager_impl.h"
 
 #include <wlayersurface.h>
 #include <wxdgpopupsurface.h>
@@ -36,6 +34,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+extern "C" {
+#define static
+#include <wlr/types/wlr_compositor.h>
+#undef static
+}
+
 DCORE_USE_NAMESPACE
 
 static PersonalizationV1 *PERSONALIZATION_MANAGER = nullptr;
@@ -52,7 +56,6 @@ static QString defaultBackground()
     return defaultBg;
 }
 
-// TODO(rewine)： https://github.com/linuxdeepin/treeland/issues/715
 static std::optional<int32_t> protocolWindowThemeTypeToDConfig(uint32_t type)
 {
     switch (type) {
@@ -84,6 +87,937 @@ static uint32_t dconfigWindowThemeTypeToProtocol(int32_t type)
     }
 }
 
+// ============================================================================
+// PersonalizationManagerV1Private
+// ============================================================================
+
+class PersonalizationManagerV1Private
+    : public QtWaylandServer::treeland_personalization_manager_v1
+{
+public:
+    PersonalizationManagerV1Private(PersonalizationV1 *_q);
+    ~PersonalizationManagerV1Private() override = default;
+
+    wl_global *global() const;
+    PersonalizationV1 *q;
+
+protected:
+    void bind_resource(Resource *resource) override;
+    void destroy_resource(Resource *resource) override;
+    void destroy_global() override;
+    void get_window_context(Resource *resource, struct ::wl_resource *surface, uint32_t id) override;
+    void get_wallpaper_context(Resource *resource, uint32_t id) override;
+    void get_cursor_context(Resource *resource, uint32_t id) override;
+    void get_font_context(Resource *resource, uint32_t id) override;
+    void get_appearance_context(Resource *resource, uint32_t id) override;
+};
+
+PersonalizationManagerV1Private::PersonalizationManagerV1Private(PersonalizationV1 *_q)
+    : q(_q)
+{
+}
+
+wl_global *PersonalizationManagerV1Private::global() const
+{
+    return m_global;
+}
+
+void PersonalizationManagerV1Private::bind_resource(Resource *resource)
+{
+}
+
+void PersonalizationManagerV1Private::destroy_resource(Resource *resource)
+{
+}
+
+void PersonalizationManagerV1Private::destroy_global()
+{
+    delete q;
+}
+
+void PersonalizationManagerV1Private::get_window_context(Resource *resource,
+                                                          struct ::wl_resource *surface,
+                                                          uint32_t id)
+{
+    auto *wlrSurface = wlr_surface_from_resource(surface);
+    auto *context = new PersonalizationWindowContextV1(this,
+                                                       resource->client(),
+                                                       id,
+                                                       resource->version(),
+                                                       wlrSurface);
+    Q_EMIT q->windowContextCreated(context);
+}
+
+void PersonalizationManagerV1Private::get_wallpaper_context(Resource *resource, uint32_t id)
+{
+    auto *context = new PersonalizationWallpaperContextV1(this,
+                                                          resource->client(),
+                                                          id,
+                                                          resource->version());
+    Q_EMIT q->onWallpaperContextCreated(context);
+}
+
+void PersonalizationManagerV1Private::get_cursor_context(Resource *resource, uint32_t id)
+{
+    auto *context = new PersonalizationCursorContextV1(this,
+                                                       resource->client(),
+                                                       id,
+                                                       resource->version());
+    Q_EMIT q->onCursorContextCreated(context);
+}
+
+void PersonalizationManagerV1Private::get_font_context(Resource *resource, uint32_t id)
+{
+    auto *context = new PersonalizationFontContextV1(this,
+                                                     resource->client(),
+                                                     id,
+                                                     resource->version());
+    Q_EMIT q->onFontContextCreated(context);
+}
+
+void PersonalizationManagerV1Private::get_appearance_context(Resource *resource, uint32_t id)
+{
+    auto *context = new PersonalizationAppearanceContextV1(this,
+                                                           resource->client(),
+                                                           id,
+                                                           resource->version());
+    Q_EMIT q->onAppearanceContextCreated(context);
+}
+
+// ============================================================================
+// PersonalizationWindowContextV1Private
+// ============================================================================
+
+class PersonalizationWindowContextV1Private
+    : public QtWaylandServer::treeland_personalization_window_context_v1
+{
+public:
+    PersonalizationWindowContextV1Private(PersonalizationWindowContextV1 *_q,
+                                          PersonalizationManagerV1Private *_manager,
+                                          wl_client *client,
+                                          uint32_t id,
+                                          int version,
+                                          wlr_surface *surface);
+    ~PersonalizationWindowContextV1Private() override = default;
+
+    PersonalizationWindowContextV1 *q = nullptr;
+    PersonalizationManagerV1Private *manager = nullptr;
+    wlr_surface *m_surface = nullptr;
+
+    int32_t m_backgroundType = 0;
+    int32_t m_cornerRadius = 0;
+    Shadow m_shadow;
+    Border m_border;
+    PersonalizationWindowContextV1::WindowStates m_states;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void set_blend_mode(Resource *resource, int32_t type) override;
+    void set_round_corner_radius(Resource *resource, int32_t radius) override;
+    void set_shadow(Resource *resource, int32_t radius, int32_t offset_x, int32_t offset_y, int32_t r, int32_t g, int32_t b, int32_t a) override;
+    void set_border(Resource *resource, int32_t width, int32_t r, int32_t g, int32_t b, int32_t a) override;
+    void set_titlebar(Resource *resource, int32_t mode) override;
+};
+
+PersonalizationWindowContextV1Private::PersonalizationWindowContextV1Private(
+    PersonalizationWindowContextV1 *_q,
+    PersonalizationManagerV1Private *_manager,
+    wl_client *client,
+    uint32_t id,
+    int version,
+    wlr_surface *surface)
+    : q(_q)
+    , manager(_manager)
+    , m_surface(surface)
+{
+    auto *resource = wl_resource_create(client,
+                                        &treeland_personalization_window_context_v1_interface,
+                                        version,
+                                        id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+void PersonalizationWindowContextV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void PersonalizationWindowContextV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void PersonalizationWindowContextV1Private::set_blend_mode(Resource *resource, int32_t type)
+{
+    m_backgroundType = type;
+    Q_EMIT q->backgroundTypeChanged();
+}
+
+void PersonalizationWindowContextV1Private::set_round_corner_radius(Resource *resource, int32_t radius)
+{
+    m_cornerRadius = radius;
+    Q_EMIT q->cornerRadiusChanged();
+}
+
+void PersonalizationWindowContextV1Private::set_shadow(Resource *resource,
+                                                        int32_t radius,
+                                                        int32_t offset_x,
+                                                        int32_t offset_y,
+                                                        int32_t r,
+                                                        int32_t g,
+                                                        int32_t b,
+                                                        int32_t a)
+{
+    m_shadow = Shadow{ radius, QPoint{ offset_x, offset_y }, QColor{ r, g, b, a } };
+    Q_EMIT q->shadowChanged();
+}
+
+void PersonalizationWindowContextV1Private::set_border(Resource *resource,
+                                                        int32_t width,
+                                                        int32_t r,
+                                                        int32_t g,
+                                                        int32_t b,
+                                                        int32_t a)
+{
+    m_border = Border{ width, QColor{ r, g, b, a } };
+    Q_EMIT q->borderChanged();
+}
+
+void PersonalizationWindowContextV1Private::set_titlebar(Resource *resource, int32_t mode)
+{
+    m_states.setFlag(
+        PersonalizationWindowContextV1::WindowState::NoTitleBar,
+        mode == TREELAND_PERSONALIZATION_WINDOW_CONTEXT_V1_ENABLE_MODE_DISABLE);
+    Q_EMIT q->windowStateChanged();
+}
+
+// ============================================================================
+// PersonalizationWindowContextV1
+// ============================================================================
+
+PersonalizationWindowContextV1::PersonalizationWindowContextV1(
+    PersonalizationManagerV1Private *manager,
+    wl_client *client,
+    uint32_t id,
+    int version,
+    wlr_surface *surface)
+    : QObject(nullptr)
+    , d(new PersonalizationWindowContextV1Private(this, manager, client, id, version, surface))
+{
+}
+
+PersonalizationWindowContextV1::~PersonalizationWindowContextV1() = default;
+
+wlr_surface *PersonalizationWindowContextV1::surface() const
+{
+    return d->m_surface;
+}
+
+int32_t PersonalizationWindowContextV1::backgroundType() const
+{
+    return d->m_backgroundType;
+}
+
+int32_t PersonalizationWindowContextV1::cornerRadius() const
+{
+    return d->m_cornerRadius;
+}
+
+Shadow PersonalizationWindowContextV1::shadow() const
+{
+    return d->m_shadow;
+}
+
+Border PersonalizationWindowContextV1::border() const
+{
+    return d->m_border;
+}
+
+PersonalizationWindowContextV1::WindowStates PersonalizationWindowContextV1::states() const
+{
+    return d->m_states;
+}
+
+PersonalizationWindowContextV1 *PersonalizationWindowContextV1::get(wl_resource *resource)
+{
+    auto *r = QtWaylandServer::treeland_personalization_window_context_v1::Resource::fromResource(resource);
+    if (r && r->object()) {
+        return static_cast<PersonalizationWindowContextV1Private *>(r->object())->q;
+    }
+    return nullptr;
+}
+
+// ============================================================================
+// PersonalizationWallpaperContextV1Private
+// ============================================================================
+
+class PersonalizationWallpaperContextV1Private
+    : public QtWaylandServer::treeland_personalization_wallpaper_context_v1
+{
+public:
+    PersonalizationWallpaperContextV1Private(PersonalizationWallpaperContextV1 *_q,
+                                             PersonalizationManagerV1Private *_manager,
+                                             wl_client *client,
+                                             uint32_t id,
+                                             int version);
+    ~PersonalizationWallpaperContextV1Private() override = default;
+
+    PersonalizationWallpaperContextV1 *q = nullptr;
+    PersonalizationManagerV1Private *manager = nullptr;
+
+    int32_t m_fd = -1;
+    uint32_t m_uid = 0;
+    uint32_t m_options = 0;
+    bool m_isDark = false;
+    QString m_metaData;
+    QString m_identifier;
+    QString m_outputName;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void set_fd(Resource *resource, int32_t fd, const QString &metadata) override;
+    void set_identifier(Resource *resource, const QString &identifier) override;
+    void set_output(Resource *resource, const QString &output) override;
+    void set_on(Resource *resource, uint32_t options) override;
+    void set_isdark(Resource *resource, uint32_t isdark) override;
+    void commit(Resource *resource) override;
+    void get_metadata(Resource *resource) override;
+};
+
+PersonalizationWallpaperContextV1Private::PersonalizationWallpaperContextV1Private(
+    PersonalizationWallpaperContextV1 *_q,
+    PersonalizationManagerV1Private *_manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : q(_q)
+    , manager(_manager)
+{
+    auto *resource = wl_resource_create(client,
+                                        &treeland_personalization_wallpaper_context_v1_interface,
+                                        version,
+                                        id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+
+    wl_client_get_credentials(client, nullptr, &m_uid, nullptr);
+}
+
+void PersonalizationWallpaperContextV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void PersonalizationWallpaperContextV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void PersonalizationWallpaperContextV1Private::set_fd(Resource *resource, int32_t fd, const QString &metadata)
+{
+    m_fd = fd;
+    m_metaData = metadata;
+}
+
+void PersonalizationWallpaperContextV1Private::set_identifier(Resource *resource, const QString &identifier)
+{
+    m_identifier = identifier;
+}
+
+void PersonalizationWallpaperContextV1Private::set_output(Resource *resource, const QString &output)
+{
+    m_outputName = output;
+}
+
+void PersonalizationWallpaperContextV1Private::set_on(Resource *resource, uint32_t options)
+{
+    m_options = options;
+}
+
+void PersonalizationWallpaperContextV1Private::set_isdark(Resource *resource, uint32_t isdark)
+{
+    m_isDark = isdark;
+}
+
+void PersonalizationWallpaperContextV1Private::commit(Resource *resource)
+{
+    Q_EMIT q->commit();
+}
+
+void PersonalizationWallpaperContextV1Private::get_metadata(Resource *resource)
+{
+    Q_EMIT q->getWallpapers();
+}
+
+// ============================================================================
+// PersonalizationWallpaperContextV1
+// ============================================================================
+
+PersonalizationWallpaperContextV1::PersonalizationWallpaperContextV1(
+    PersonalizationManagerV1Private *manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : QObject(nullptr)
+    , d(new PersonalizationWallpaperContextV1Private(this, manager, client, id, version))
+{
+}
+
+PersonalizationWallpaperContextV1::~PersonalizationWallpaperContextV1() = default;
+
+int32_t PersonalizationWallpaperContextV1::fd() const
+{
+    return d->m_fd;
+}
+
+uint32_t PersonalizationWallpaperContextV1::uid() const
+{
+    return d->m_uid;
+}
+
+uint32_t PersonalizationWallpaperContextV1::options() const
+{
+    return d->m_options;
+}
+
+bool PersonalizationWallpaperContextV1::isDark() const
+{
+    return d->m_isDark;
+}
+
+QString PersonalizationWallpaperContextV1::metaData() const
+{
+    return d->m_metaData;
+}
+
+QString PersonalizationWallpaperContextV1::identifier() const
+{
+    return d->m_identifier;
+}
+
+QString PersonalizationWallpaperContextV1::outputName() const
+{
+    return d->m_outputName;
+}
+
+void PersonalizationWallpaperContextV1::setMetaData(const QString &data)
+{
+    d->m_metaData = data;
+    d->send_metadata(data);
+}
+
+PersonalizationWallpaperContextV1 *PersonalizationWallpaperContextV1::get(wl_resource *resource)
+{
+    auto *r = QtWaylandServer::treeland_personalization_wallpaper_context_v1::Resource::fromResource(resource);
+    if (r && r->object()) {
+        return static_cast<PersonalizationWallpaperContextV1Private *>(r->object())->q;
+    }
+    return nullptr;
+}
+
+// ============================================================================
+// PersonalizationCursorContextV1Private
+// ============================================================================
+
+class PersonalizationCursorContextV1Private
+    : public QtWaylandServer::treeland_personalization_cursor_context_v1
+{
+public:
+    PersonalizationCursorContextV1Private(PersonalizationCursorContextV1 *_q,
+                                          PersonalizationManagerV1Private *_manager,
+                                          wl_client *client,
+                                          uint32_t id,
+                                          int version);
+    ~PersonalizationCursorContextV1Private() override = default;
+
+    PersonalizationCursorContextV1 *q = nullptr;
+    PersonalizationManagerV1Private *manager = nullptr;
+
+    QSize m_size;
+    QString m_theme;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void set_theme(Resource *resource, const QString &name) override;
+    void get_theme(Resource *resource) override;
+    void set_size(Resource *resource, uint32_t size) override;
+    void get_size(Resource *resource) override;
+    void commit(Resource *resource) override;
+};
+
+PersonalizationCursorContextV1Private::PersonalizationCursorContextV1Private(
+    PersonalizationCursorContextV1 *_q,
+    PersonalizationManagerV1Private *_manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : q(_q)
+    , manager(_manager)
+{
+    auto *resource = wl_resource_create(client,
+                                        &treeland_personalization_cursor_context_v1_interface,
+                                        version,
+                                        id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+void PersonalizationCursorContextV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void PersonalizationCursorContextV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void PersonalizationCursorContextV1Private::set_theme(Resource *resource, const QString &name)
+{
+    m_theme = name;
+}
+
+void PersonalizationCursorContextV1Private::get_theme(Resource *resource)
+{
+    Q_EMIT q->getTheme();
+}
+
+void PersonalizationCursorContextV1Private::set_size(Resource *resource, uint32_t size)
+{
+    m_size = QSize(size, size);
+}
+
+void PersonalizationCursorContextV1Private::get_size(Resource *resource)
+{
+    Q_EMIT q->getSize();
+}
+
+void PersonalizationCursorContextV1Private::commit(Resource *resource)
+{
+    Q_EMIT q->commit();
+}
+
+// ============================================================================
+// PersonalizationCursorContextV1
+// ============================================================================
+
+PersonalizationCursorContextV1::PersonalizationCursorContextV1(
+    PersonalizationManagerV1Private *manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : QObject(nullptr)
+    , d(new PersonalizationCursorContextV1Private(this, manager, client, id, version))
+{
+}
+
+PersonalizationCursorContextV1::~PersonalizationCursorContextV1() = default;
+
+QSize PersonalizationCursorContextV1::size() const
+{
+    return d->m_size;
+}
+
+QString PersonalizationCursorContextV1::theme() const
+{
+    return d->m_theme;
+}
+
+void PersonalizationCursorContextV1::setTheme(const QString &theme)
+{
+    d->m_theme = theme;
+}
+
+void PersonalizationCursorContextV1::setSize(const QSize &size)
+{
+    d->m_size = size;
+}
+
+void PersonalizationCursorContextV1::verify(bool verified)
+{
+    d->send_verfity(verified);
+}
+
+void PersonalizationCursorContextV1::sendTheme()
+{
+    d->send_theme(d->m_theme);
+}
+
+void PersonalizationCursorContextV1::sendSize()
+{
+    d->send_size(d->m_size.width());
+}
+
+PersonalizationCursorContextV1 *PersonalizationCursorContextV1::get(wl_resource *resource)
+{
+    auto *r = QtWaylandServer::treeland_personalization_cursor_context_v1::Resource::fromResource(resource);
+    if (r && r->object()) {
+        return static_cast<PersonalizationCursorContextV1Private *>(r->object())->q;
+    }
+    return nullptr;
+}
+
+// ============================================================================
+// PersonalizationAppearanceContextV1Private
+// ============================================================================
+
+class PersonalizationAppearanceContextV1Private
+    : public QtWaylandServer::treeland_personalization_appearance_context_v1
+{
+public:
+    PersonalizationAppearanceContextV1Private(PersonalizationAppearanceContextV1 *_q,
+                                              PersonalizationManagerV1Private *_manager,
+                                              wl_client *client,
+                                              uint32_t id,
+                                              int version);
+    ~PersonalizationAppearanceContextV1Private() override = default;
+
+    PersonalizationAppearanceContextV1 *q = nullptr;
+    PersonalizationManagerV1Private *manager = nullptr;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void set_round_corner_radius(Resource *resource, int32_t radius) override;
+    void get_round_corner_radius(Resource *resource) override;
+    void set_icon_theme(Resource *resource, const QString &theme_name) override;
+    void get_icon_theme(Resource *resource) override;
+    void set_active_color(Resource *resource, const QString &color) override;
+    void get_active_color(Resource *resource) override;
+    void set_window_opacity(Resource *resource, uint32_t opacity) override;
+    void get_window_opacity(Resource *resource) override;
+    void set_window_theme_type(Resource *resource, uint32_t type) override;
+    void get_window_theme_type(Resource *resource) override;
+    void set_window_titlebar_height(Resource *resource, uint32_t height) override;
+    void get_window_titlebar_height(Resource *resource) override;
+};
+
+PersonalizationAppearanceContextV1Private::PersonalizationAppearanceContextV1Private(
+    PersonalizationAppearanceContextV1 *_q,
+    PersonalizationManagerV1Private *_manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : q(_q)
+    , manager(_manager)
+{
+    auto *resource = wl_resource_create(client,
+                                        &treeland_personalization_appearance_context_v1_interface,
+                                        version,
+                                        id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+void PersonalizationAppearanceContextV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void PersonalizationAppearanceContextV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void PersonalizationAppearanceContextV1Private::set_round_corner_radius(Resource *resource, int32_t radius)
+{
+    Q_EMIT q->roundCornerRadiusChanged(radius);
+}
+
+void PersonalizationAppearanceContextV1Private::get_round_corner_radius(Resource *resource)
+{
+    Q_EMIT q->requestRoundCornerRadius();
+}
+
+void PersonalizationAppearanceContextV1Private::set_icon_theme(Resource *resource, const QString &theme_name)
+{
+    Q_EMIT q->iconThemeChanged(theme_name);
+}
+
+void PersonalizationAppearanceContextV1Private::get_icon_theme(Resource *resource)
+{
+    Q_EMIT q->requestIconTheme();
+}
+
+void PersonalizationAppearanceContextV1Private::set_active_color(Resource *resource, const QString &color)
+{
+    Q_EMIT q->activeColorChanged(color);
+}
+
+void PersonalizationAppearanceContextV1Private::get_active_color(Resource *resource)
+{
+    Q_EMIT q->requestActiveColor();
+}
+
+void PersonalizationAppearanceContextV1Private::set_window_opacity(Resource *resource, uint32_t opacity)
+{
+    Q_EMIT q->windowOpacityChanged(opacity);
+}
+
+void PersonalizationAppearanceContextV1Private::get_window_opacity(Resource *resource)
+{
+    Q_EMIT q->requestWindowOpacity();
+}
+
+void PersonalizationAppearanceContextV1Private::set_window_theme_type(Resource *resource, uint32_t type)
+{
+    Q_EMIT q->windowThemeTypeChanged(type);
+}
+
+void PersonalizationAppearanceContextV1Private::get_window_theme_type(Resource *resource)
+{
+    Q_EMIT q->requestWindowThemeType();
+}
+
+void PersonalizationAppearanceContextV1Private::set_window_titlebar_height(Resource *resource, uint32_t height)
+{
+    Q_EMIT q->titlebarHeightChanged(height);
+}
+
+void PersonalizationAppearanceContextV1Private::get_window_titlebar_height(Resource *resource)
+{
+    Q_EMIT q->requestWindowTitlebarHeight();
+}
+
+// ============================================================================
+// PersonalizationAppearanceContextV1
+// ============================================================================
+
+PersonalizationAppearanceContextV1::PersonalizationAppearanceContextV1(
+    PersonalizationManagerV1Private *manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : QObject(nullptr)
+    , d(new PersonalizationAppearanceContextV1Private(this, manager, client, id, version))
+{
+}
+
+PersonalizationAppearanceContextV1::~PersonalizationAppearanceContextV1() = default;
+
+void PersonalizationAppearanceContextV1::setRoundCornerRadius(int32_t radius)
+{
+    Q_EMIT roundCornerRadiusChanged(radius);
+}
+
+void PersonalizationAppearanceContextV1::sendRoundCornerRadius(int32_t radius)
+{
+    d->send_round_corner_radius(radius);
+}
+
+void PersonalizationAppearanceContextV1::setIconTheme(const QString &theme)
+{
+    Q_EMIT iconThemeChanged(theme);
+}
+
+void PersonalizationAppearanceContextV1::sendIconTheme(const QString &theme)
+{
+    d->send_icon_theme(theme);
+}
+
+void PersonalizationAppearanceContextV1::setActiveColor(const QString &color)
+{
+    Q_EMIT activeColorChanged(color);
+}
+
+void PersonalizationAppearanceContextV1::sendActiveColor(const QString &color)
+{
+    d->send_active_color(color);
+}
+
+void PersonalizationAppearanceContextV1::setWindowOpacity(uint32_t opacity)
+{
+    Q_EMIT windowOpacityChanged(opacity);
+}
+
+void PersonalizationAppearanceContextV1::sendWindowOpacity(uint32_t opacity)
+{
+    d->send_window_opacity(opacity);
+}
+
+void PersonalizationAppearanceContextV1::setWindowThemeType(uint32_t type)
+{
+    Q_EMIT windowThemeTypeChanged(type);
+}
+
+void PersonalizationAppearanceContextV1::sendWindowThemeType(uint32_t type)
+{
+    d->send_window_theme_type(type);
+}
+
+void PersonalizationAppearanceContextV1::setWindowTitlebarHeight(uint32_t height)
+{
+    Q_EMIT titlebarHeightChanged(height);
+}
+
+void PersonalizationAppearanceContextV1::sendWindowTitlebarHeight(uint32_t height)
+{
+    d->send_window_titlebar_height(height);
+}
+
+PersonalizationAppearanceContextV1 *PersonalizationAppearanceContextV1::get(wl_resource *resource)
+{
+    auto *r = QtWaylandServer::treeland_personalization_appearance_context_v1::Resource::fromResource(resource);
+    if (r && r->object()) {
+        return static_cast<PersonalizationAppearanceContextV1Private *>(r->object())->q;
+    }
+    return nullptr;
+}
+
+// ============================================================================
+// PersonalizationFontContextV1Private
+// ============================================================================
+
+class PersonalizationFontContextV1Private
+    : public QtWaylandServer::treeland_personalization_font_context_v1
+{
+public:
+    PersonalizationFontContextV1Private(PersonalizationFontContextV1 *_q,
+                                        PersonalizationManagerV1Private *_manager,
+                                        wl_client *client,
+                                        uint32_t id,
+                                        int version);
+    ~PersonalizationFontContextV1Private() override = default;
+
+    PersonalizationFontContextV1 *q = nullptr;
+    PersonalizationManagerV1Private *manager = nullptr;
+
+protected:
+    void destroy_resource(Resource *resource) override;
+    void destroy(Resource *resource) override;
+    void set_font(Resource *resource, const QString &font) override;
+    void get_font(Resource *resource) override;
+    void set_monospace_font(Resource *resource, const QString &font) override;
+    void get_monospace_font(Resource *resource) override;
+    void set_font_size(Resource *resource, uint32_t size) override;
+    void get_font_size(Resource *resource) override;
+};
+
+PersonalizationFontContextV1Private::PersonalizationFontContextV1Private(
+    PersonalizationFontContextV1 *_q,
+    PersonalizationManagerV1Private *_manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : q(_q)
+    , manager(_manager)
+{
+    auto *resource = wl_resource_create(client,
+                                        &treeland_personalization_font_context_v1_interface,
+                                        version,
+                                        id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    init(resource);
+}
+
+void PersonalizationFontContextV1Private::destroy_resource(Resource *resource)
+{
+    Q_EMIT q->beforeDestroy();
+    delete q;
+}
+
+void PersonalizationFontContextV1Private::destroy(Resource *resource)
+{
+    wl_resource_destroy(resource->handle);
+}
+
+void PersonalizationFontContextV1Private::set_font(Resource *resource, const QString &font)
+{
+    Q_EMIT q->fontChanged(font);
+}
+
+void PersonalizationFontContextV1Private::get_font(Resource *resource)
+{
+    Q_EMIT q->requestFont();
+}
+
+void PersonalizationFontContextV1Private::set_monospace_font(Resource *resource, const QString &font)
+{
+    Q_EMIT q->monoFontChanged(font);
+}
+
+void PersonalizationFontContextV1Private::get_monospace_font(Resource *resource)
+{
+    Q_EMIT q->requestMonoFont();
+}
+
+void PersonalizationFontContextV1Private::set_font_size(Resource *resource, uint32_t size)
+{
+    Q_EMIT q->fontSizeChanged(size);
+}
+
+void PersonalizationFontContextV1Private::get_font_size(Resource *resource)
+{
+    Q_EMIT q->requestFontSize();
+}
+
+// ============================================================================
+// PersonalizationFontContextV1
+// ============================================================================
+
+PersonalizationFontContextV1::PersonalizationFontContextV1(
+    PersonalizationManagerV1Private *manager,
+    wl_client *client,
+    uint32_t id,
+    int version)
+    : QObject(nullptr)
+    , d(new PersonalizationFontContextV1Private(this, manager, client, id, version))
+{
+}
+
+PersonalizationFontContextV1::~PersonalizationFontContextV1() = default;
+
+void PersonalizationFontContextV1::sendFont(const QString &font)
+{
+    d->send_font(font);
+}
+
+void PersonalizationFontContextV1::sendMonospaceFont(const QString &font)
+{
+    d->send_monospace_font(font);
+}
+
+void PersonalizationFontContextV1::sendFontSize(uint32_t size)
+{
+    d->send_font_size(size);
+}
+
+PersonalizationFontContextV1 *PersonalizationFontContextV1::get(wl_resource *resource)
+{
+    auto *r = QtWaylandServer::treeland_personalization_font_context_v1::Resource::fromResource(resource);
+    if (r && r->object()) {
+        return static_cast<PersonalizationFontContextV1Private *>(r->object())->q;
+    }
+    return nullptr;
+}
+
+// ============================================================================
+// PersonalizationV1
+// ============================================================================
+
 void PersonalizationV1::updateCacheWallpaperPath(uid_t uid)
 {
     QString cache_location = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
@@ -95,8 +1029,8 @@ void PersonalizationV1::updateCacheWallpaperPath(uid_t uid)
 }
 
 QString PersonalizationV1::readWallpaperSettings(const QString &group,
-                                                 const QString &output,
-                                                 int workspaceId)
+                                                  const QString &output,
+                                                  int workspaceId)
 {
     if (m_settingFile.isEmpty() || output.isEmpty() || workspaceId < 1)
         return defaultBackground();
@@ -108,6 +1042,8 @@ QString PersonalizationV1::readWallpaperSettings(const QString &group,
 
 PersonalizationV1::PersonalizationV1(QObject *parent)
     : QObject(parent)
+    , WServerInterface()
+    , d(new PersonalizationManagerV1Private(this))
 {
     if (PERSONALIZATION_MANAGER) {
         qFatal("There are multiple instances of QuickPersonalizationManager");
@@ -117,7 +1053,6 @@ PersonalizationV1::PersonalizationV1(QObject *parent)
 
     PERSONALIZATION_MANAGER = this;
 
-    // When not use ddm, set uid by self
     if (qgetenv("TREELAND_RUN_MODE") == "user") {
         setUserId(getgid());
     }
@@ -130,9 +1065,9 @@ PersonalizationV1::~PersonalizationV1()
     Q_CLEANUP_RESOURCE(default_background);
 }
 
-void PersonalizationV1::onWindowContextCreated(personalization_window_context_v1 *context)
+void PersonalizationV1::onWindowContextCreated(PersonalizationWindowContextV1 *context)
 {
-    connect(context, &personalization_window_context_v1::before_destroy, this, [this, context] {
+    connect(context, &PersonalizationWindowContextV1::beforeDestroy, this, [this, context] {
         m_windowContexts.removeAll(context);
     });
 
@@ -141,32 +1076,32 @@ void PersonalizationV1::onWindowContextCreated(personalization_window_context_v1
     Q_EMIT windowContextCreated(context);
 }
 
-void PersonalizationV1::onWallpaperContextCreated(personalization_wallpaper_context_v1 *context)
+void PersonalizationV1::onWallpaperContextCreated(PersonalizationWallpaperContextV1 *context)
 {
     connect(context,
-            &personalization_wallpaper_context_v1::commit,
+            &PersonalizationWallpaperContextV1::commit,
             this,
             &PersonalizationV1::onWallpaperCommit);
     connect(context,
-            &personalization_wallpaper_context_v1::getWallpapers,
+            &PersonalizationWallpaperContextV1::getWallpapers,
             this,
             &PersonalizationV1::onGetWallpapers);
 }
 
-void PersonalizationV1::onCursorContextCreated(personalization_cursor_context_v1 *context)
+void PersonalizationV1::onCursorContextCreated(PersonalizationCursorContextV1 *context)
 {
     connect(context,
-            &personalization_cursor_context_v1::commit,
+            &PersonalizationCursorContextV1::commit,
             this,
             &PersonalizationV1::onCursorCommit);
     connect(context,
-            &personalization_cursor_context_v1::get_theme,
+            &PersonalizationCursorContextV1::getTheme,
             context,
-            &personalization_cursor_context_v1::sendTheme);
+            &PersonalizationCursorContextV1::sendTheme);
     connect(context,
-            &personalization_cursor_context_v1::get_size,
+            &PersonalizationCursorContextV1::getSize,
             context,
-            &personalization_cursor_context_v1::sendSize);
+            &PersonalizationCursorContextV1::sendSize);
 
     context->blockSignals(true);
     context->setTheme(Helper::instance()->config()->cursorThemeName());
@@ -188,79 +1123,77 @@ void PersonalizationV1::onCursorContextCreated(personalization_cursor_context_v1
     context->blockSignals(false);
 }
 
-void PersonalizationV1::onAppearanceContextCreated(personalization_appearance_context_v1 *context)
+void PersonalizationV1::onAppearanceContextCreated(PersonalizationAppearanceContextV1 *context)
 {
-    using Appearance = personalization_appearance_context_v1;
-
     m_appearanceContexts.push_back(context);
 
-    connect(context, &Appearance::roundCornerRadiusChanged, this, [this](int32_t radius) {
+    connect(context, &PersonalizationAppearanceContextV1::roundCornerRadiusChanged, this, [this](int32_t radius) {
         Helper::instance()->config()->setWindowRadius(radius);
-        for (auto *context : m_appearanceContexts) {
-            context->sendRoundCornerRadius(radius);
+        for (auto *c : m_appearanceContexts) {
+            c->sendRoundCornerRadius(radius);
         }
     });
-    connect(context, &Appearance::iconThemeChanged, this, [this](const QString &theme) {
+    connect(context, &PersonalizationAppearanceContextV1::iconThemeChanged, this, [this](const QString &theme) {
         Helper::instance()->config()->setIconThemeName(theme);
-        for (auto *context : m_appearanceContexts) {
-            context->sendIconTheme(theme.toUtf8());
+        for (auto *c : m_appearanceContexts) {
+            c->sendIconTheme(theme);
         }
     });
-    connect(context, &Appearance::activeColorChanged, this, [this](const QString &color) {
+    connect(context, &PersonalizationAppearanceContextV1::activeColorChanged, this, [this](const QString &color) {
         Helper::instance()->config()->setActiveColor(color);
-        for (auto *context : m_appearanceContexts) {
-            context->sendActiveColor(color.toUtf8());
+        for (auto *c : m_appearanceContexts) {
+            c->sendActiveColor(color);
         }
     });
-    connect(context, &Appearance::windowOpacityChanged, this, [this](uint32_t opacity) {
+    connect(context, &PersonalizationAppearanceContextV1::windowOpacityChanged, this, [this](uint32_t opacity) {
         Helper::instance()->config()->setWindowOpacity(opacity);
-        for (auto *context : m_appearanceContexts) {
-            context->sendWindowOpacity(opacity);
+        for (auto *c : m_appearanceContexts) {
+            c->sendWindowOpacity(opacity);
         }
     });
-    connect(context, &Appearance::windowThemeTypeChanged, this, [this](int32_t type) {
-        const auto dconfigType = protocolWindowThemeTypeToDConfig(static_cast<uint32_t>(type));
+    connect(context, &PersonalizationAppearanceContextV1::windowThemeTypeChanged, this, [this](uint32_t type) {
+        const auto dconfigType = protocolWindowThemeTypeToDConfig(type);
         if (dconfigType.has_value()) {
             Helper::instance()->config()->setWindowThemeType(*dconfigType);
         }
-        for (auto *context : m_appearanceContexts) {
-            context->sendWindowThemeType(type);
+        for (auto *c : m_appearanceContexts) {
+            c->sendWindowThemeType(type);
         }
     });
-    connect(context, &Appearance::titlebarHeightChanged, this, [this](uint32_t height) {
+    connect(context, &PersonalizationAppearanceContextV1::titlebarHeightChanged, this, [this](uint32_t height) {
         Helper::instance()->config()->setWindowTitlebarHeight(height);
-        for (auto *context : m_appearanceContexts) {
-            context->sendWindowTitlebarHeight(height);
+        for (auto *c : m_appearanceContexts) {
+            c->sendWindowTitlebarHeight(height);
         }
     });
 
-    connect(context, &Appearance::requestRoundCornerRadius, context, [this, context] {
+    connect(context, &PersonalizationAppearanceContextV1::requestRoundCornerRadius, context, [this, context] {
         context->setRoundCornerRadius(windowRadius());
     });
 
-    connect(context, &Appearance::requestIconTheme, context, [this, context] {
-        context->setIconTheme(iconTheme().toUtf8());
+    connect(context, &PersonalizationAppearanceContextV1::requestIconTheme, context, [this, context] {
+        context->setIconTheme(iconTheme());
     });
 
-    connect(context, &Appearance::requestActiveColor, context, [context] {
-        context->setActiveColor(Helper::instance()->config()->activeColor().toUtf8());
+    connect(context, &PersonalizationAppearanceContextV1::requestActiveColor, context, [context] {
+        context->setActiveColor(Helper::instance()->config()->activeColor());
     });
 
-    connect(context, &Appearance::requestWindowOpacity, context, [context] {
+    connect(context, &PersonalizationAppearanceContextV1::requestWindowOpacity, context, [context] {
         context->setWindowOpacity(Helper::instance()->config()->windowOpacity());
     });
 
-    connect(context, &Appearance::requestWindowThemeType, context, [context] {
+    connect(context, &PersonalizationAppearanceContextV1::requestWindowThemeType, context, [context] {
         const auto protocolType = dconfigWindowThemeTypeToProtocol(
             Helper::instance()->config()->windowThemeType());
         context->setWindowThemeType(protocolType);
     });
 
-    connect(context, &Appearance::requestWindowTitlebarHeight, context, [context] {
+    connect(context, &PersonalizationAppearanceContextV1::requestWindowTitlebarHeight, context, [context] {
         context->setWindowTitlebarHeight(Helper::instance()->config()->windowTitlebarHeight());
     });
 
-    connect(context, &Appearance::beforeDestroy, this, [this, context] {
+    connect(context, &PersonalizationAppearanceContextV1::beforeDestroy, this, [this, context] {
         for (auto it = m_appearanceContexts.begin(); it != m_appearanceContexts.end(); ++it) {
             if (*it == context) {
                 m_appearanceContexts.erase(it);
@@ -272,8 +1205,8 @@ void PersonalizationV1::onAppearanceContextCreated(personalization_appearance_co
     context->blockSignals(true);
 
     context->setRoundCornerRadius(Helper::instance()->config()->windowRadius());
-    context->setIconTheme(Helper::instance()->config()->iconThemeName().toUtf8());
-    context->setActiveColor(Helper::instance()->config()->activeColor().toUtf8());
+    context->setIconTheme(Helper::instance()->config()->iconThemeName());
+    context->setActiveColor(Helper::instance()->config()->activeColor());
     context->setWindowOpacity(Helper::instance()->config()->windowOpacity());
     context->setWindowThemeType(dconfigWindowThemeTypeToProtocol(
         Helper::instance()->config()->windowThemeType()));
@@ -282,10 +1215,8 @@ void PersonalizationV1::onAppearanceContextCreated(personalization_appearance_co
     context->blockSignals(false);
 }
 
-void PersonalizationV1::onFontContextCreated(personalization_font_context_v1 *context)
+void PersonalizationV1::onFontContextCreated(PersonalizationFontContextV1 *context)
 {
-    using Font = personalization_font_context_v1;
-
     connect(Helper::instance()->config(), &TreelandUserConfig::fontChanged, context, [context] {
         context->sendFont(Helper::instance()->config()->font());
     });
@@ -296,24 +1227,21 @@ void PersonalizationV1::onFontContextCreated(personalization_font_context_v1 *co
         context->sendFontSize(Helper::instance()->config()->fontSize());
     });
 
-    connect(context, &Font::requestFont, context, [context] {
+    connect(context, &PersonalizationFontContextV1::requestFont, context, [context] {
         context->sendFont(Helper::instance()->config()->font());
     });
-    connect(context, &Font::requestMonoFont, context, [context] {
+    connect(context, &PersonalizationFontContextV1::requestMonoFont, context, [context] {
         context->sendMonospaceFont(Helper::instance()->config()->monoFont());
     });
-    connect(context, &Font::requestFontSize, context, [context] {
+    connect(context, &PersonalizationFontContextV1::requestFontSize, context, [context] {
         context->sendFontSize(Helper::instance()->config()->fontSize());
     });
 
-    connect(context, &Font::fontChanged, Helper::instance()->config(), &TreelandUserConfig::setFont);
-    connect(context,
-            &Font::monoFontChanged,
-            Helper::instance()->config(),
-            &TreelandUserConfig::setMonoFont);
-    connect(context, &Font::fontSizeChanged, Helper::instance()->config(), &TreelandUserConfig::setFontSize);
+    connect(context, &PersonalizationFontContextV1::fontChanged, Helper::instance()->config(), &TreelandUserConfig::setFont);
+    connect(context, &PersonalizationFontContextV1::monoFontChanged, Helper::instance()->config(), &TreelandUserConfig::setMonoFont);
+    connect(context, &PersonalizationFontContextV1::fontSizeChanged, Helper::instance()->config(), &TreelandUserConfig::setFontSize);
 
-    connect(context, &Font::beforeDestroy, this, [this, context] {
+    connect(context, &PersonalizationFontContextV1::beforeDestroy, this, [this, context] {
         for (auto it = m_fontContexts.begin(); it != m_fontContexts.end(); ++it) {
             if (*it == context) {
                 m_fontContexts.erase(it);
@@ -333,10 +1261,10 @@ void PersonalizationV1::onFontContextCreated(personalization_font_context_v1 *co
     m_fontContexts.push_back(context);
 }
 
-void PersonalizationV1::saveImage(personalization_wallpaper_context_v1 *context,
-                                  const QString &prefix)
+void PersonalizationV1::saveImage(PersonalizationWallpaperContextV1 *context,
+                                   const QString &prefix)
 {
-    if (!context || context->fd == -1 || m_settingFile.isEmpty()) {
+    if (!context || context->fd() == -1 || m_settingFile.isEmpty()) {
         return;
     }
 
@@ -345,7 +1273,7 @@ void PersonalizationV1::saveImage(personalization_wallpaper_context_v1 *context,
         dir.mkpath(m_cacheDirectory);
     }
 
-    QString output = context->output_name;
+    QString output = context->outputName();
     if (output.isEmpty()) {
         for (QScreen *screen : QGuiApplication::screens()) {
             output = screen->name();
@@ -357,7 +1285,7 @@ void PersonalizationV1::saveImage(personalization_wallpaper_context_v1 *context,
         + QDateTime::currentDateTime().toString("yyyyMMddhhmmss");
 
     QFile src_file;
-    if (!src_file.open(context->fd, QIODevice::ReadOnly))
+    if (!src_file.open(context->fd(), QIODevice::ReadOnly))
         return;
 
     QByteArray data = src_file.readAll();
@@ -371,7 +1299,6 @@ void PersonalizationV1::saveImage(personalization_wallpaper_context_v1 *context,
 
     QSettings settings(m_settingFile, QSettings::IniFormat);
 
-    // TODO: protocol need to support multi-workspace
     int workspaceId = 1;
     settings.beginGroup(QString("%1.%2.%3").arg(prefix).arg(output).arg(workspaceId));
 
@@ -379,45 +1306,45 @@ void PersonalizationV1::saveImage(personalization_wallpaper_context_v1 *context,
     QFile::remove(old_path);
 
     settings.setValue("path", dest);
-    settings.setValue("isdark", context->isdark);
+    settings.setValue("isdark", context->isDark());
     settings.endGroup();
 
-    settings.setValue("metadata", context->meta_data);
-    m_iniMetaData = context->meta_data;
+    settings.setValue("metadata", context->metaData());
+    m_iniMetaData = context->metaData();
 }
 
-void PersonalizationV1::onWallpaperCommit(personalization_wallpaper_context_v1 *context)
+void PersonalizationV1::onWallpaperCommit(PersonalizationWallpaperContextV1 *context)
 {
-    if (context->options & TREELAND_PERSONALIZATION_WALLPAPER_CONTEXT_V1_OPTIONS_BACKGROUND) {
+    if (context->options() & TREELAND_PERSONALIZATION_WALLPAPER_CONTEXT_V1_OPTIONS_BACKGROUND) {
         saveImage(context, "background");
-        Q_EMIT backgroundChanged(context->output_name, context->isdark);
+        Q_EMIT backgroundChanged(context->outputName(), context->isDark());
     }
 
-    if (context->options & TREELAND_PERSONALIZATION_WALLPAPER_CONTEXT_V1_OPTIONS_LOCKSCREEN) {
+    if (context->options() & TREELAND_PERSONALIZATION_WALLPAPER_CONTEXT_V1_OPTIONS_LOCKSCREEN) {
         saveImage(context, "lockscreen");
         Q_EMIT lockscreenChanged();
     }
 }
 
-void PersonalizationV1::onCursorCommit(personalization_cursor_context_v1 *context)
+void PersonalizationV1::onCursorCommit(PersonalizationCursorContextV1 *context)
 {
-    if (!context->size.isValid() || context->theme.isEmpty()) {
-        context->verfity(false);
+    if (!context->size().isValid() || context->theme().isEmpty()) {
+        context->verify(false);
     }
 
-    setCursorTheme(context->theme);
-    setCursorSize(context->size);
+    setCursorTheme(context->theme());
+    setCursorSize(context->size());
 
-    context->verfity(true);
+    context->verify(true);
 }
 
-void PersonalizationV1::onGetWallpapers(personalization_wallpaper_context_v1 *context)
+void PersonalizationV1::onGetWallpapers(PersonalizationWallpaperContextV1 *context)
 {
     QDir dir(m_cacheDirectory);
     if (!dir.exists())
         return;
 
-    context->set_meta_data(m_iniMetaData);
+    context->setMetaData(m_iniMetaData);
 }
 
 uid_t PersonalizationV1::userId()
@@ -494,6 +1421,10 @@ bool PersonalizationV1::isAnimagedImage(const QString &source)
     return reader.imageCount() > 1;
 }
 
+// ============================================================================
+// Personalization
+// ============================================================================
+
 Personalization::Personalization(WToplevelSurface *target,
                                  PersonalizationV1 *manager,
                                  SurfaceWrapper *parent)
@@ -505,53 +1436,53 @@ Personalization::Personalization(WToplevelSurface *target,
         disconnect(m_connection);
     });
 
-    auto update = [this](personalization_window_context_v1 *context) {
+    auto update = [this](PersonalizationWindowContextV1 *context) {
         assert(context);
 
-        if (WSurface::fromHandle(context->surface) != m_target->surface()) {
+        if (WSurface::fromHandle(context->surface()) != m_target->surface()) {
             return;
         }
 
         disconnect(m_connection);
 
         connect(context,
-                &personalization_window_context_v1::backgroundTypeChanged,
+                &PersonalizationWindowContextV1::backgroundTypeChanged,
                 this,
                 [this, context] {
-                    m_backgroundType = context->background_type;
+                    m_backgroundType = context->backgroundType();
                     Q_EMIT backgroundTypeChanged();
                 });
         connect(context,
-                &personalization_window_context_v1::cornerRadiusChanged,
+                &PersonalizationWindowContextV1::cornerRadiusChanged,
                 this,
                 [this, context] {
-                    m_cornerRadius = context->corner_radius;
+                    m_cornerRadius = context->cornerRadius();
                     Q_EMIT cornerRadiusChanged();
                 });
 
-        connect(context, &personalization_window_context_v1::shadowChanged, this, [this, context] {
-            m_shadow = context->shadow;
+        connect(context, &PersonalizationWindowContextV1::shadowChanged, this, [this, context] {
+            m_shadow = context->shadow();
             Q_EMIT shadowChanged();
         });
 
-        connect(context, &personalization_window_context_v1::borderChanged, this, [this, context] {
-            m_border = context->border;
+        connect(context, &PersonalizationWindowContextV1::borderChanged, this, [this, context] {
+            m_border = context->border();
             Q_EMIT borderChanged();
         });
 
         connect(context,
-                &personalization_window_context_v1::windowStateChanged,
+                &PersonalizationWindowContextV1::windowStateChanged,
                 this,
                 [this, context] {
-                    m_states = context->states;
+                    m_states = context->states();
                     Q_EMIT windowStateChanged();
                 });
 
-        m_backgroundType = context->background_type;
-        m_cornerRadius = context->corner_radius;
-        m_shadow = context->shadow;
-        m_border = context->border;
-        m_states = context->states;
+        m_backgroundType = context->backgroundType();
+        m_cornerRadius = context->cornerRadius();
+        m_shadow = context->shadow();
+        m_border = context->border();
+        m_states = context->states();
     };
 
     m_connection = connect(m_manager, &PersonalizationV1::windowContextCreated, this, update);
@@ -573,55 +1504,37 @@ Personalization::BackgroundType Personalization::backgroundType() const
 
 bool Personalization::noTitlebar() const
 {
-    if (qobject_cast<WAYLIB_SERVER_NAMESPACE::WXdgPopupSurface *>(m_target)) {
+    if (qobject_cast<WXdgPopupSurface *>(m_target)) {
         return true;
     }
 
-    return m_states.testFlag(personalization_window_context_v1::NoTitleBar);
+    return m_states.testFlag(PersonalizationWindowContextV1::NoTitleBar);
 }
 
 void PersonalizationV1::create(WServer *server)
 {
-    m_manager = treeland_personalization_manager_v1::create(server->handle());
-    connect(m_manager,
-            &treeland_personalization_manager_v1::windowContextCreated,
-            this,
-            &PersonalizationV1::onWindowContextCreated);
-    connect(m_manager,
-            &treeland_personalization_manager_v1::wallpaperContextCreated,
-            this,
-            &PersonalizationV1::onWallpaperContextCreated);
-    connect(m_manager,
-            &treeland_personalization_manager_v1::cursorContextCreated,
-            this,
-            &PersonalizationV1::onCursorContextCreated);
-    connect(m_manager,
-            &treeland_personalization_manager_v1::appearanceContextCreated,
-            this,
-            &PersonalizationV1::onAppearanceContextCreated);
-    connect(m_manager,
-            &treeland_personalization_manager_v1::fontContextCreated,
-            this,
-            &PersonalizationV1::onFontContextCreated);
+    d->init(server->handle()->handle(), 1);
 }
 
-void PersonalizationV1::destroy([[maybe_unused]] WServer *server) {
+void PersonalizationV1::destroy([[maybe_unused]] WServer *server)
+{
+    d = nullptr;
 }
 
 wl_global *PersonalizationV1::global() const
 {
-    return m_manager->global;
+    return d->global();
 }
 
 QByteArrayView PersonalizationV1::interfaceName() const
 {
-    return treeland_personalization_manager_v1_interface.name;
+    return d->interfaceName();
 }
 
-personalization_window_context_v1 *PersonalizationV1::getWindowContext(WSurface *surface)
+PersonalizationWindowContextV1 *PersonalizationV1::getWindowContext(WSurface *surface)
 {
     for (auto *context : m_windowContexts) {
-        if (context->surface == surface->handle()->handle()) {
+        if (context->surface() == surface->handle()->handle()) {
             return context;
         }
     }

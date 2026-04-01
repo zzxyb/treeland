@@ -7,6 +7,8 @@
 #include "helper.h"
 #include "usermodel.h"
 
+#include <qwdisplay.h>
+
 #include <wayland-server-core.h>
 #include <wayland-server.h>
 #include <wayland-util.h>

@@ -61,14 +61,14 @@ ShellHandler::ShellHandler(RootSurfaceContainer *rootContainer, WServer *server)
     , m_popupContainer(new SurfaceContainer(rootContainer))
     , m_windowConfigStore(new WindowConfigStore(this))
 {
-    m_treelandForeignToplevel = server->attach<ForeignToplevelV1>();
-    Q_ASSERT(m_treelandForeignToplevel);
-    qmlRegisterSingletonInstance<ForeignToplevelV1>("Treeland.Protocols",
+    m_foreignToplevelManagerV1 = server->attach<ForeignToplevelManagerInterfaceV1>();
+    Q_ASSERT(m_foreignToplevelManagerV1);
+    qmlRegisterSingletonInstance<ForeignToplevelManagerInterfaceV1>("Treeland.Protocols",
                                                     1,
                                                     0,
-                                                    "ForeignToplevelV1",
-                                                    m_treelandForeignToplevel);
-    qRegisterMetaType<ForeignToplevelV1::PreviewDirection>();
+                                                    "ForeignToplevelManagerInterfaceV1",
+                                                    m_foreignToplevelManagerV1);
+    qRegisterMetaType<ForeignToplevelManagerInterfaceV1::PreviewDirection>();
 
     m_backgroundContainer->setZ(RootSurfaceContainer::BackgroundZOrder);
     m_bottomContainer->setZ(RootSurfaceContainer::BottomZOrder);
@@ -654,13 +654,13 @@ void ShellHandler::ensureXwaylandWrapper(WXWaylandSurface *surface, const QStrin
 void ShellHandler::registerSurfaceToForeignToplevel(SurfaceWrapper *wrapper)
 {
     if (!wrapper->skipDockPreView()) {
-        m_treelandForeignToplevel->addSurface(wrapper);
+        m_foreignToplevelManagerV1->addSurface(wrapper);
     }
     connect(wrapper, &SurfaceWrapper::skipDockPreViewChanged, this, [this, wrapper] {
         if (wrapper->skipDockPreView()) {
-            m_treelandForeignToplevel->removeSurface(wrapper);
+            m_foreignToplevelManagerV1->removeSurface(wrapper);
         } else {
-            m_treelandForeignToplevel->addSurface(wrapper);
+            m_foreignToplevelManagerV1->addSurface(wrapper);
         }
     });
 }
@@ -669,16 +669,16 @@ void ShellHandler::setupDockPreview()
 {
     Q_ASSERT(m_dockPreview);
 
-    connect(m_treelandForeignToplevel,
-            &ForeignToplevelV1::requestDockPreview,
+    connect(m_foreignToplevelManagerV1,
+            &ForeignToplevelManagerInterfaceV1::requestDockPreview,
             this,
             &ShellHandler::onDockPreview);
-    connect(m_treelandForeignToplevel,
-            &ForeignToplevelV1::requestDockPreviewTooltip,
+    connect(m_foreignToplevelManagerV1,
+            &ForeignToplevelManagerInterfaceV1::requestDockPreviewTooltip,
             this,
             &ShellHandler::onDockPreviewTooltip);
-    connect(m_treelandForeignToplevel,
-            &ForeignToplevelV1::requestDockClose,
+    connect(m_foreignToplevelManagerV1,
+            &ForeignToplevelManagerInterfaceV1::requestDockPreviewClose,
             m_dockPreview,
             [this]() {
                 QMetaObject::invokeMethod(m_dockPreview, "close");
@@ -688,7 +688,7 @@ void ShellHandler::setupDockPreview()
 void ShellHandler::onDockPreview(std::vector<SurfaceWrapper *> surfaces,
                                  WSurface *target,
                                  QPoint pos,
-                                 ForeignToplevelV1::PreviewDirection direction)
+                                 ForeignToplevelManagerInterfaceV1::PreviewDirection direction)
 {
     if (!m_dockPreview)
         return;
@@ -707,7 +707,7 @@ void ShellHandler::onDockPreview(std::vector<SurfaceWrapper *> surfaces,
 void ShellHandler::onDockPreviewTooltip(QString tooltip,
                                         WSurface *target,
                                         QPoint pos,
-                                        ForeignToplevelV1::PreviewDirection direction)
+                                        ForeignToplevelManagerInterfaceV1::PreviewDirection direction)
 {
     if (!m_dockPreview)
         return;
