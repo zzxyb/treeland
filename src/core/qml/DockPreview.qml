@@ -79,7 +79,7 @@ Item {
         function activateWindow(surfaceWrapper) {
             console.debug(qLcDockPreview, "activate preview window: ", surfaceWrapper)
             Helper.forceActivateSurface(surfaceWrapper)
-            ForeignToplevelV1.leaveDockPreview(root.target.shellSurface.surface)
+            ForeignToplevelManagerInterfaceV1.leaveDockPreview(root.target.shellSurface.surface)
             root.close();
         }
 
@@ -198,7 +198,7 @@ Item {
     states: [
         State {
             name: "dock_bottom"
-            when: direction === ForeignToplevelV1.PreviewDirection.bottom
+            when: direction === ForeignToplevelManagerInterfaceV1.PreviewDirection.bottom
             AnchorChanges {
                 target: root
                 anchors.horizontalCenter: root.target?.horizontalCenter
@@ -226,7 +226,7 @@ Item {
         },
         State {
             name: "dock_left"
-            when: direction === ForeignToplevelV1.PreviewDirection.left
+            when: direction === ForeignToplevelManagerInterfaceV1.PreviewDirection.left
             AnchorChanges {
                 target: root
                 anchors.verticalCenter: root.target?.verticalCenter
@@ -252,7 +252,7 @@ Item {
         },
         State {
             name: "dock_top"
-            when: direction === ForeignToplevelV1.PreviewDirection.top
+            when: direction === ForeignToplevelManagerInterfaceV1.PreviewDirection.top
             AnchorChanges {
                 target: root
                 anchors.horizontalCenter: root.target?.horizontalCenter
@@ -278,7 +278,7 @@ Item {
         },
         State {
             name: "dock_right"
-            when: direction === ForeignToplevelV1.PreviewDirection.right
+            when: direction === ForeignToplevelManagerInterfaceV1.PreviewDirection.right
             AnchorChanges {
                 target: root
                 anchors.verticalCenter: root.target?.verticalCenter
@@ -629,9 +629,9 @@ Item {
             enabled: listview.count !== 0
             onHoveredChanged: {
                 if (!hovered) {
-                    ForeignToplevelV1.leaveDockPreview(root.target.shellSurface.surface)
+                    ForeignToplevelManagerInterfaceV1.leaveDockPreview(root.target.shellSurface.surface)
                 } else {
-                    ForeignToplevelV1.enterDockPreview(root.target.shellSurface.surface)
+                    ForeignToplevelManagerInterfaceV1.enterDockPreview(root.target.shellSurface.surface)
                 }
             }
             cursorShape: Qt.ArrowCursor

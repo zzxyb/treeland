@@ -31,7 +31,7 @@ class Workspace;
 class SurfaceContainer;
 class PopupSurfaceContainer;
 class QmlEngine;
-class ForeignToplevelV1;
+class ForeignToplevelManagerInterfaceV1;
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 class WServer;
@@ -114,11 +114,11 @@ private Q_SLOTS:
     void onDockPreview(std::vector<SurfaceWrapper *> surfaces,
                        WAYLIB_SERVER_NAMESPACE::WSurface *target,
                        QPoint pos,
-                       ForeignToplevelV1::PreviewDirection direction);
+                       ForeignToplevelManagerInterfaceV1::PreviewDirection direction);
     void onDockPreviewTooltip(QString tooltip,
                               WAYLIB_SERVER_NAMESPACE::WSurface *target,
                               QPoint pos,
-                              ForeignToplevelV1::PreviewDirection direction);
+                              ForeignToplevelManagerInterfaceV1::PreviewDirection direction);
 
     void setupDockPreview();
     void onInputPopupSurfaceV2Removed(WAYLIB_SERVER_NAMESPACE::WInputPopupSurface *surface);
@@ -162,7 +162,7 @@ private:
     TreelandWallpaperShellInterfaceV1 *m_wallpaperShell = nullptr;
     WAYLIB_SERVER_NAMESPACE::WInputMethodHelper *m_inputMethodHelper = nullptr;
     QList<WAYLIB_SERVER_NAMESPACE::WXWayland *> m_xwaylands;
-    ForeignToplevelV1 *m_treelandForeignToplevel = nullptr;
+    ForeignToplevelManagerInterfaceV1 *m_treelandForeignToplevel = nullptr;
 
     QPointer<RootSurfaceContainer> m_rootSurfaceContainer;
     LayerSurfaceContainer *m_backgroundContainer = nullptr;
