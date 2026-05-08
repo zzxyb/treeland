@@ -138,6 +138,8 @@ qt_add_qml_module(libtreeland
         effects/tquickradiuseffect_p.h
         effects/tsgradiusimagenode.cpp
         effects/tsgradiusimagenode.h
+        effects/radiustexturematerial.cpp
+        effects/radiustexturematerial.h
         $<$<OR:$<NOT:$<BOOL:${DISABLE_DDM}>>,$<BOOL:${EXT_SESSION_LOCK_V1}>>:core/lockscreen.h>
         $<$<OR:$<NOT:$<BOOL:${DISABLE_DDM}>>,$<BOOL:${EXT_SESSION_LOCK_V1}>>:core/lockscreen.cpp>
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:greeter/greeterproxy.cpp>
@@ -259,17 +261,17 @@ target_compile_definitions(libtreeland
     WLR_USE_UNSTABLE
 )
 
-qt_add_shaders(libtreeland "treeland_shaders_ng"
-    BATCHABLE
-    PRECOMPILE
-    PREFIX
-        "/shaders"
-    BASE
-        ${PROJECT_RESOURCES_DIR}/shaders
-    FILES
-        ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.vert
-        ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.frag
-)
+# qt_add_shaders(libtreeland "treeland_shaders_ng"
+#     BATCHABLE
+#     PRECOMPILE
+#     PREFIX
+#         "/shaders"
+#     BASE
+#         ${PROJECT_RESOURCES_DIR}/shaders
+#     FILES
+#         ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.vert
+#         ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.frag
+# )
 
 qt_add_resources(libtreeland "treeland_assets"
     PREFIX "/dsg/icons"

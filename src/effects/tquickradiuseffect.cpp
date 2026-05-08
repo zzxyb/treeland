@@ -377,7 +377,7 @@ QSGNode *TQuickRadiusEffect::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeDa
             node->setBottomLeftRadius(-1.);
             node->setBottomRightRadius(-1.);
         }
-        node->setAntialiasing(antialiasing());
+        // node->setAntialiasing(antialiasing());
 
         return node;
     }

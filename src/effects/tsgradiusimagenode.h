@@ -3,38 +3,35 @@
 
 #pragma once
 
+#include "radiustexturematerial.h"
+
 #include <QPointer>
 #include <QSGGeometryNode>
-#include <QSGTextureMaterial>
 #include <QSGTextureProvider>
-
-class TSGRadiusSmoothTextureMaterial : public QSGOpaqueTextureMaterial
-{
-public:
-    TSGRadiusSmoothTextureMaterial();
-    int compare(const QSGMaterial *other) const override;
-
-protected:
-    QSGMaterialType *type() const override;
-    QSGMaterialShader *createShader(QSGRendererInterface::RenderMode renderMode) const override;
-};
+#include <QSGSimpleTextureNode>
 
 class TSGRadiusImageNode
     : public QObject
-    , public QSGNode
+    , public QSGGeometryNode
 {
     Q_OBJECT
 public:
     TSGRadiusImageNode();
+    ~TSGRadiusImageNode() override;
 
     void setRect(const QRectF &rect);
-    void setAntialiasingWidth(float width);
+    inline void setRect(qreal x, qreal y, qreal w, qreal h) { setRect(QRectF(x, y, w, h)); }
+    QRectF rect() const;
 
-    void preprocess() override;
-    void setMipmapFiltering(QSGTexture::Filtering filtering);
+    void setSourceRect(const QRectF &r);
+    inline void setSourceRect(qreal x, qreal y, qreal w, qreal h) { setSourceRect(QRectF(x, y, w, h)); }
+    QRectF sourceRect() const;
+
     void setFiltering(QSGTexture::Filtering filtering);
-    void setHorizontalWrapMode(QSGTexture::WrapMode wrapMode);
-    void setVerticalWrapMode(QSGTexture::WrapMode wrapMode);
+    QSGTexture::Filtering filtering() const;
+
+    void setTextureCoordinatesTransform(QSGSimpleTextureNode::TextureCoordinatesTransformMode mode);
+    QSGSimpleTextureNode::TextureCoordinatesTransformMode textureCoordinatesTransform() const;
 
     void setRadius(qreal radius);
     void setTopLeftRadius(qreal radius);
@@ -42,42 +39,30 @@ public:
     void setBottomLeftRadius(qreal radius);
     void setBottomRightRadius(qreal radius);
 
-    void setAntialiasing(bool antialiasing);
     void setTextureProvider(QSGTextureProvider *p);
+    void setOwnsTexture(bool owns);
+    bool ownsTexture() const;
+    void setTexture(QSGTexture *texture);
+    QSGTexture *texture() const;
 
 public Q_SLOTS:
     void handleTextureChange();
 
-protected:
-    void updateMaterialAntialiasing();
-    void setMaterialTexture(QSGTexture *texture);
-    bool updateMaterialBlending();
-    void updateGeometry();
-    void updateTexturedRadiusGeometry(const QRectF &rect, const QRectF &textureRect);
-
 private:
-    void setTexture(QSGTexture *texture);
-    QSGTexture *texture() const;
-
-private:
-    QSGGeometryNode m_node;
-
-    QSGOpaqueTextureMaterial m_opaquematerial;
-    QSGTextureMaterial m_material;
-    TSGRadiusSmoothTextureMaterial m_radiusMaterial;
-
+    QSGGeometry m_geometry;
+    RadiusOpaqueTextureMaterial m_opaque_material;
+    RadiusTextureMaterial m_material;
     QPointer<QSGTextureProvider> m_provider;
-
-    QRectF m_targetRect;
-    QSize m_textureSize;
 
     float m_radius = 0.0f;
     float m_topLeftRadius = -1.0f;
     float m_topRightRadius = -1.0f;
     float m_bottomLeftRadius = -1.0f;
     float m_bottomRightRadius = -1.0f;
-    float m_antialiasingWidth = 1;
 
-    uint m_antialiasing : 1;
-    uint m_dirtyGeometry : 1;
+    QRectF m_rect;
+    QRectF m_sourceRect;
+    QSGSimpleTextureNode::TextureCoordinatesTransformMode texCoordMode;
+    uint isAtlasTexture : 1;
+    uint m_ownsTexture : 1;
 };
