@@ -15,6 +15,7 @@ Q_MOC_INCLUDE(<wsurface.h>)
 QW_BEGIN_NAMESPACE
 class qw_seat;
 class qw_surface;
+class qw_keyboard_group;
 QW_END_NAMESPACE
 
 QT_BEGIN_NAMESPACE
@@ -29,6 +30,8 @@ typedef uint wl_pointer_axis_relative_direction_t;
 typedef uint wl_pointer_button_state_t;
 struct wlr_seat;
 struct wlr_seat_client;
+struct xkb_rule_names;
+struct xkb_keymap;
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
@@ -102,6 +105,10 @@ public:
 
     WInputDevice *keyboard() const;
     void setKeyboard(WInputDevice *newKeyboard);
+
+    bool setKeyboardKeymap(const struct xkb_rule_names &rules);
+    bool setKeyboardKeymap(struct xkb_keymap *keymap);
+    void setKeyboardRepeatInfo(int32_t rate_hz, int32_t delay_ms);
 
     bool alwaysUpdateHoverTarget() const;
     void setAlwaysUpdateHoverTarget(bool newIgnoreSurfacePointerEventExclusiveGrabber);

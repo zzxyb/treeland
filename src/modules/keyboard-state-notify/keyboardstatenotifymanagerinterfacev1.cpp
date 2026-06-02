@@ -9,6 +9,7 @@
 
 #include <qwdisplay.h>
 #include <qwkeyboard.h>
+#include <qwkeyboardgroup.h>
 #include <qwinputdevice.h>
 #include <qwseat.h>
 
@@ -47,6 +48,28 @@ static uint32_t getLockStateBitfield(xkb_state *state)
     return locked;
 }
 
+static wlr_keyboard *getEffectiveKeyboard(WSeat *seat)
+{
+    const auto devices = seat->deviceList();
+    for (auto *device : devices) {
+        if (device->type() != WInputDevice::Type::Keyboard) {
+            continue;
+        }
+
+        auto *qwKb = qobject_cast<qw_keyboard *>(device->handle());
+        if (!qwKb) {
+            continue;
+        }
+
+        if (qwKb->handle()->group) {
+            return &qwKb->handle()->group->keyboard;
+        }
+
+        return qwKb->handle();
+    }
+    return nullptr;
+}
+
 class TreelandKeyboardStateNotifyManagerInterfaceV1Private
     : public QtWaylandServer::treeland_keyboard_state_notify_manager_v1
 {
@@ -67,8 +90,13 @@ protected:
 
 private:
     void onModifiersEvent(WSeat *seat);
+    void connectKeyboard(WSeat *seat, wlr_keyboard *wlrKb);
 
-    QList<QMetaObject::Connection> m_keyboardConnections;
+    struct KeyboardConnection {
+        qw_keyboard *keyboard = nullptr;
+        QMetaObject::Connection modifiersConn;
+    };
+    QList<KeyboardConnection> m_keyboardConnections;
 };
 
 TreelandKeyboardStateNotifyManagerInterfaceV1Private::TreelandKeyboardStateNotifyManagerInterfaceV1Private(
@@ -89,26 +117,43 @@ void TreelandKeyboardStateNotifyManagerInterfaceV1Private::bind_resource([[maybe
     }
 }
 
+void TreelandKeyboardStateNotifyManagerInterfaceV1Private::connectKeyboard(WSeat *seat, wlr_keyboard *wlrKb)
+{
+    auto *qwKb = qw_keyboard::from(wlrKb);
+
+    for (const auto &conn : std::as_const(m_keyboardConnections)) {
+        if (conn.keyboard == qwKb)
+            return;
+    }
+
+    KeyboardConnection conn;
+    conn.keyboard = qwKb;
+    conn.modifiersConn = QObject::connect(qwKb, &qw_keyboard::notify_modifiers, q, [this, seat]() {
+        onModifiersEvent(seat);
+    });
+    m_keyboardConnections.push_back(conn);
+
+    QObject::connect(qwKb, &qw_keyboard::before_destroy, q, [this, qwKb, seat]() {
+        m_keyboardConnections.removeIf([qwKb](const KeyboardConnection &c) {
+            return c.keyboard == qwKb;
+        });
+    });
+}
+
 void TreelandKeyboardStateNotifyManagerInterfaceV1Private::setupKeyboardConnections()
 {
     auto *helper = Helper::instance();
-    if (!helper)
-        return;
-
     const auto seats = helper->seatManager()->seats();
     for (auto *seat : seats) {
-        auto *keyboard = seat->keyboard();
-        if (!keyboard)
-            continue;
+        auto *wlrKb = getEffectiveKeyboard(seat);
+        if (wlrKb)
+            connectKeyboard(seat, wlrKb);
 
-        auto *wlrKeyboard = qobject_cast<qw_keyboard *>(keyboard->handle());
-        if (!wlrKeyboard)
-            continue;
-
-        m_keyboardConnections.push_back(
-            QObject::connect(wlrKeyboard, &qw_keyboard::notify_modifiers, q, [this, seat]() {
-                onModifiersEvent(seat);
-            }));
+        QObject::connect(seat, &WSeat::keyboardChanged, q, [this, seat]() {
+            auto *wlrKb = getEffectiveKeyboard(seat);
+            if (wlrKb)
+                connectKeyboard(seat, wlrKb);
+        });
     }
 }
 
@@ -117,15 +162,11 @@ void TreelandKeyboardStateNotifyManagerInterfaceV1Private::onModifiersEvent(WSea
     if (s_watchers.isEmpty())
         return;
 
-    auto *keyboard = seat->keyboard();
-    if (!keyboard)
+    auto *wlrKeyboard = getEffectiveKeyboard(seat);
+    if (!wlrKeyboard || !wlrKeyboard->xkb_state)
         return;
 
-    auto *wlrKeyboard = qobject_cast<qw_keyboard *>(keyboard->handle());
-    if (!wlrKeyboard || !wlrKeyboard->handle()->xkb_state)
-        return;
-
-    uint32_t currentLocks = getLockStateBitfield(wlrKeyboard->handle()->xkb_state);
+    uint32_t currentLocks = getLockStateBitfield(wlrKeyboard->xkb_state);
     uint32_t prevLocks = s_lastLockStates.value(seat, 0);
     uint32_t changed = currentLocks ^ prevLocks;
 
@@ -161,8 +202,10 @@ void TreelandKeyboardStateNotifyManagerInterfaceV1Private::onModifiersEvent(WSea
 void TreelandKeyboardStateNotifyManagerInterfaceV1Private::destroy(Resource *resource)
 {
     if (resourceMap().size() == 1) {
-        for (auto &conn : m_keyboardConnections)
-            QObject::disconnect(conn);
+        for (auto &conn : std::as_const(m_keyboardConnections)) {
+            QObject::disconnect(conn.modifiersConn);
+        }
+
         m_keyboardConnections.clear();
     }
 
@@ -275,15 +318,11 @@ void KeyboardStateWatcherV1Private::apply([[maybe_unused]] Resource *resource)
     }
 
     for (auto *seat : std::as_const(seats)) {
-        auto *keyboard = seat->keyboard();
-        if (!keyboard)
+        auto *wlrKeyboard = getEffectiveKeyboard(seat);
+        if (!wlrKeyboard || !wlrKeyboard->xkb_state)
             continue;
 
-        auto *wlrKeyboard = qobject_cast<qw_keyboard *>(keyboard->handle());
-        if (!wlrKeyboard || !wlrKeyboard->handle()->xkb_state)
-            continue;
-
-        uint32_t currentLocks = getLockStateBitfield(wlrKeyboard->handle()->xkb_state);
+        uint32_t currentLocks = getLockStateBitfield(wlrKeyboard->xkb_state);
 
         for (int i = 0; i < 2; ++i) {
             uint32_t mod = (1u << i);
