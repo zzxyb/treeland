@@ -630,8 +630,7 @@ void WCursor::detachInputDevice(WInputDevice *device)
     W_D(WCursor);
 
     if (!d->deviceList.removeOne(device)) {
-        qCDebug(waylibCursor) << "Cannot detach device" << device->qtDevice()->name()
-                             << "- not attached to this cursor";
+        qCDebug(waylibCursor) << "Cannot detach device, not attached to this cursor";
         return;
     }
 

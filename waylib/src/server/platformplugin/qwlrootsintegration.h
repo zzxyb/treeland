@@ -22,10 +22,13 @@ QT_BEGIN_NAMESPACE
 class QInputDevice;
 QT_END_NAMESPACE
 
+struct wlr_keyboard;
+
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 class WOutput;
 class WInputDevice;
+class WKeyboardGroup;
 class QWlrootsScreen;
 class Q_DECL_HIDDEN QWlrootsIntegration : public QPlatformIntegration, public QPlatformNativeInterface
 {
@@ -42,6 +45,7 @@ public:
         return m_screens;
     }
 
+    QPointer<QInputDevice> addKeyboardInputDevice(WKeyboardGroup *keyboardGroup, WInputDevice *device, const QString &seatName);
     QPointer<QInputDevice> addInputDevice(WInputDevice *device, const QString &seatName);
     bool removeInputDevice(WInputDevice *device);
     QInputDevice *getInputDeviceFrom(WInputDevice *device);

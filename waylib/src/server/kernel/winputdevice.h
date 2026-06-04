@@ -4,6 +4,7 @@
 #pragma once
 
 #include <wglobal.h>
+
 #include <QObject>
 #include <qwglobal.h>
 #include <QMap>

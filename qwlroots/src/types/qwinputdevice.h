@@ -22,6 +22,7 @@ extern "C" {
 #include <wlr/backend/x11.h>
 #endif
 #include <wlr/backend/libinput.h>
+#include <wlr/types/wlr_input_device.h>
 }
 
 QW_BEGIN_NAMESPACE
