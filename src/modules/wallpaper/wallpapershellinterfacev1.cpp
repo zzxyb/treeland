@@ -122,12 +122,14 @@ public:
     wl_resource *resource = nullptr;
     WallpaperSurface *surface = nullptr;
     QString wallpaperSource;
+    bool wallpaperReady = false;
 
 protected:
     void destroy_resource(Resource *resource) override;
     void destroy(Resource *resource) override;
     void source_failed(Resource *resource,
                                                      uint32_t error) override;
+    void ready(Resource *resource) override;
 };
 
 TreelandWallpaperSurfaceInterfaceV1Private::TreelandWallpaperSurfaceInterfaceV1Private(TreelandWallpaperSurfaceInterfaceV1 *_q,
@@ -144,7 +146,6 @@ TreelandWallpaperSurfaceInterfaceV1Private::TreelandWallpaperSurfaceInterfaceV1P
 
 void TreelandWallpaperSurfaceInterfaceV1Private::destroy_resource([[maybe_unused]] Resource *resource)
 {
-    Q_EMIT q->beforeDestroy(q);
     delete q;
 }
 
@@ -157,6 +158,23 @@ void TreelandWallpaperSurfaceInterfaceV1Private::source_failed([[maybe_unused]] 
                                                                uint32_t error)
 {
     Q_EMIT q->failed(error);
+}
+
+void TreelandWallpaperSurfaceInterfaceV1Private::ready(Resource *resource)
+{
+    if (wallpaperReady) {
+        return;
+    }
+
+    if (q->wSurface()->mapped()) {
+        wallpaperReady = true;
+        Q_EMIT q->ready();
+    } else {
+        QObject::connect(q->wSurface(), &WSurface::mappedChanged, q, [this]() {
+            wallpaperReady = true;
+            Q_EMIT q->ready();
+        });
+    }
 }
 
 TreelandWallpaperSurfaceInterfaceV1::~TreelandWallpaperSurfaceInterfaceV1() = default;
@@ -215,6 +233,11 @@ void TreelandWallpaperSurfaceInterfaceV1::setPlay(bool value)
 void TreelandWallpaperSurfaceInterfaceV1::slowDown(uint32_t duration)
 {
     d->send_slow_down(duration);
+}
+
+bool TreelandWallpaperSurfaceInterfaceV1::wallpaperReady()
+{
+    return d->wallpaperReady;
 }
 
 TreelandWallpaperSurfaceInterfaceV1::TreelandWallpaperSurfaceInterfaceV1(wl_resource *surface,

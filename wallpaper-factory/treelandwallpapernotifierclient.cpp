@@ -89,7 +89,12 @@ void TreelandWallpaperNotifierClientV1::treeland_wallpaper_notifier_v1_add(uint3
             delete wallpaperWindow;
             return;
         }
-
+        connect(image,
+                &QQuickAnimatedImage::statusChanged,
+                window, [window](QQuickImageBase::Status status){
+                    if (status == QQuickImageBase::Ready)
+                        Q_EMIT window->setLoaded(true);
+                });
         image->setSource(QUrl::fromLocalFile(file_source));
         break;
     }
@@ -106,6 +111,11 @@ void TreelandWallpaperNotifierClientV1::treeland_wallpaper_notifier_v1_add(uint3
             return;
         }
 
+        connect(video,
+                &MpvVideoItem::fileLoaded,
+                window,[window]() {
+                    Q_EMIT window->setLoaded(true);
+                }, Qt::SingleShotConnection);
         video->setSource(file_source);
         break;
     }

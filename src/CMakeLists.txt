@@ -207,6 +207,8 @@ qt_add_qml_module(libtreeland
         wallpaper/wallpapersurface.cpp
         wallpaper/wallpaperitem.cpp
         wallpaper/wallpaperitem.h
+        wallpaper/wallpaperswitcheritem.cpp
+        wallpaper/wallpaperswitcheritem.h
         wallpaper/wallpapermanager.cpp
         wallpaper/wallpapermanager.h
         wallpaper/wallpaperconfig.h
@@ -275,17 +277,17 @@ target_compile_definitions(libtreeland
     WLR_USE_UNSTABLE
 )
 
-qt_add_shaders(libtreeland "treeland_shaders_ng"
-    BATCHABLE
-    PRECOMPILE
-    PREFIX
-        "/shaders"
-    BASE
-        ${PROJECT_RESOURCES_DIR}/shaders
-    FILES
-        ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.vert
-        ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.frag
-)
+# qt_add_shaders(libtreeland "treeland_shaders_ng"
+#     BATCHABLE
+#     PRECOMPILE
+#     PREFIX
+#         "/shaders"
+#     BASE
+#         ${PROJECT_RESOURCES_DIR}/shaders
+#     FILES
+#         ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.vert
+#         ${PROJECT_RESOURCES_DIR}/shaders/radiussmoothtexture.frag
+# )
 
 qt_add_resources(libtreeland "treeland_assets"
     PREFIX "/dsg/icons"

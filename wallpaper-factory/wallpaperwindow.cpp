@@ -22,6 +22,7 @@ public:
 
     QWindow *parentWindow;
     QString source;
+    bool loaded = false;
 };
 
 WallpaperWindow::~WallpaperWindow()
@@ -80,6 +81,21 @@ WallpaperWindow *WallpaperWindow::qmlAttachedProperties(QObject *object)
 QWindow *WallpaperWindow::parentWindow() const
 {
     return d->parentWindow;
+}
+
+bool WallpaperWindow::loaded()
+{
+    return d->loaded;
+}
+
+void WallpaperWindow::setLoaded(bool loaded)
+{
+    if (d->loaded == loaded) {
+        return;
+    }
+
+    d->loaded = loaded;
+    Q_EMIT loadedChanged();
 }
 
 void WallpaperWindow::initializeShellIntegration()

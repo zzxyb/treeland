@@ -32,7 +32,7 @@ WallpaperItem::WallpaperItem(QQuickItem *parent)
     connect(Helper::instance()->shellHandler()->wallpaperShell(),
             &TreelandWallpaperShellInterfaceV1::wallpaperSurfaceAdded,
             this,
-            &WallpaperItem::scheduleUpdate);
+            &WallpaperItem::onWallpaperSurfaceAdded);
     connect(Helper::instance()->m_wallpaperManager,
             &WallpaperManager::updateWallpaper,
             this,
@@ -166,7 +166,7 @@ void WallpaperItem::updateSurface()
     WallpaperOutputConfig config =
         Helper::instance()->m_wallpaperManager->getOutputConfig(output()->nativeHandle());
     if (wallpaperRole() == Lockscreen) {
-        if (config.lockscreenWallpaper != m_source || forceUpdateSource()) {
+        if (config.lockscreenWallpaper != m_source) {
                 TreelandWallpaperSurfaceInterfaceV1 *interface =
                     TreelandWallpaperSurfaceInterfaceV1::get(config.lockscreenWallpaper);
                 if (!interface) {
@@ -186,7 +186,7 @@ void WallpaperItem::updateSurface()
         }
         for (WallpaperWorkspaceConfig workspaceConfig : std::as_const(config.workspaces)) {
             if (workspaceConfig.workspaceId == workspace()->id() &&
-                (workspaceConfig.desktopWallpaper != m_source || forceUpdateSource())) {
+                (workspaceConfig.desktopWallpaper != m_source)) {
                 TreelandWallpaperSurfaceInterfaceV1 *interface =
                     TreelandWallpaperSurfaceInterfaceV1::get(workspaceConfig.desktopWallpaper);
                 if (!interface) {
@@ -196,7 +196,6 @@ void WallpaperItem::updateSurface()
                 setSurface(interface->wSurface());
                 interface->wSurface()->enterOutput(output());
                 update();
-                QTimer::singleShot(2000, this, [this]{ Q_EMIT sourceChanged(); });
                 break;
             }
         }
@@ -211,7 +210,7 @@ void WallpaperItem::scheduleUpdate()
     }
 
     if (wallpaperRole() != Lockscreen) {
-        QTimer::singleShot(3000,
+        QTimer::singleShot(1000,
                            this,
                            [this]{
                                updateSurface();
@@ -242,32 +241,15 @@ void WallpaperItem::handleWorkspaceAdded()
     updateSurface();
 }
 
-bool WallpaperItem::disableUpdate() const
+void WallpaperItem::onWallpaperSurfaceAdded(TreelandWallpaperSurfaceInterfaceV1 *interface)
 {
-    return m_disableUpdate;
-}
-
-void WallpaperItem::setDisableUpdate(bool disable)
-{
-    if (m_disableUpdate == disable) {
-        return;
+    if (interface->wallpaperReady()) {
+        scheduleUpdate();
+    } else {
+        connect(interface,
+                &TreelandWallpaperSurfaceInterfaceV1::ready,
+                this,
+                &WallpaperItem::scheduleUpdate,
+                Qt::SingleShotConnection);
     }
-
-    m_disableUpdate = disable;
-    Q_EMIT disableUpdateChanged();
-}
-
-bool WallpaperItem::forceUpdateSource() const
-{
-    return m_forceUpdateSource;
-}
-
-void WallpaperItem::setForceUpdateSource(bool value)
-{
-    if (m_forceUpdateSource == value) {
-        return;
-    }
-
-    m_forceUpdateSource = value;
-    Q_EMIT forceUpdateSourceChanged();
 }

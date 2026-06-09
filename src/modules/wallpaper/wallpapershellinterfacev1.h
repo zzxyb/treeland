@@ -24,7 +24,7 @@ public:
 
     QByteArrayView interfaceName() const override;
 
-    static constexpr int InterfaceVersion = 1;
+    static constexpr int InterfaceVersion = 2;
     QList<QString> producedWallpapers() const;
 
 Q_SIGNALS:
@@ -54,10 +54,11 @@ public:
     static TreelandWallpaperSurfaceInterfaceV1 *get(const QString &source);
     void setPlay(bool value);
     void slowDown(uint32_t duration = 3000);
+    bool wallpaperReady();
 
 Q_SIGNALS:
     void failed(uint32_t error);
-    void beforeDestroy(TreelandWallpaperSurfaceInterfaceV1 *surface);
+    void ready();
 
 private:
     explicit TreelandWallpaperSurfaceInterfaceV1(wl_resource *surface,

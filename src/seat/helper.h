@@ -80,6 +80,7 @@ class WSessionLock;
 WAYLIB_SERVER_END_NAMESPACE
 
 class SeatsManager;
+class WallpaperSlot;
 
 QW_BEGIN_NAMESPACE
 class qw_allocator;
@@ -315,6 +316,8 @@ private:
     friend class SessionManager;
     friend class WallpaperManager;
     friend class WallpaperItem;
+    friend class WallpaperSwitcherItem;
+    friend class WallpaperSlot;
     friend class InputManager;
 
     void allowNonDrmOutputAutoChangeMode(WOutput *output);
