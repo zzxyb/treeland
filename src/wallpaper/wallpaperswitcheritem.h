@@ -73,8 +73,9 @@ private:
     friend class WallpaperSlot;
     void handleWallpaperUpdate();
     void handleWorkspaceAdded();
-    void switchToNewSlot();
+    void switchToNewSlot(const QString &targetSource);
     void onAnimationFinished();
+    void startFadeIn(WallpaperSlot *slot);
 
     QPointer<WorkspaceModel> m_workspace;
     QPointer<WOutput> m_output;

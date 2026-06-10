@@ -286,7 +286,7 @@ void WallpaperSwitcherItem::handleWallpaperUpdate()
         return;
 
     qCDebug(qLcWallpaperSwitcher) << "Wallpaper update triggered, switching to new slot";
-    switchToNewSlot();
+    switchToNewSlot(newSource);
 }
 
 void WallpaperSwitcherItem::handleWorkspaceAdded()
@@ -298,43 +298,64 @@ void WallpaperSwitcherItem::handleWorkspaceAdded()
         m_currentSlot->scheduleUpdate();
 }
 
-void WallpaperSwitcherItem::switchToNewSlot()
+void WallpaperSwitcherItem::switchToNewSlot(const QString &targetSource)
 {
-    // Step 1: Keep current slot alive as old slot (will fade out)
-    m_oldSlot = m_currentSlot;
-    m_currentSlot = nullptr;
-
-    // Step 2: Create a new slot (starts invisible)
+    // Create a new slot and set its surface.
+    // If the surface doesn't exist yet, discard and wait for wallpaperSurfaceAdded.
     auto *newSlot = new WallpaperSlot(m_wallpaperRole, parentItem());
+    newSlot->setOpacity(0);
     newSlot->setOutput(m_output);
     newSlot->setWorkspace(m_workspace);
-    newSlot->setOpacity(0);
+
+    // Surface not ready yet: discard and wait.
+    if (newSlot->source().isEmpty()) {
+        newSlot->deleteLater();
+        return;
+    }
+
+    // Old slot: fade out and delete when done
+    m_oldSlot = m_currentSlot;
+
+    // New slot: assign before triggering any animation
     m_currentSlot = newSlot;
 
     Q_EMIT sourceChanged();
 
-    // Step 3: Animate - fade in new, fade out old
-    auto *fadeIn = new QPropertyAnimation(m_currentSlot, "opacity");
-    fadeIn->setDuration(m_opacityDuration);
-    fadeIn->setStartValue(0.0);
-    fadeIn->setEndValue(1.0);
-    fadeIn->setEasingCurve(QEasingCurve::InOutQuad);
-
+    // Fade out old slot
     auto *fadeOut = new QPropertyAnimation(m_oldSlot, "opacity");
     fadeOut->setDuration(m_opacityDuration);
     fadeOut->setStartValue(1.0);
     fadeOut->setEndValue(0.0);
     fadeOut->setEasingCurve(QEasingCurve::InOutQuad);
-
-    // Step 4: When fade-out finishes, destroy old slot
     connect(fadeOut, &QPropertyAnimation::finished, this, &WallpaperSwitcherItem::onAnimationFinished);
-
-    // Clean up animation objects when done
-    QObject::connect(fadeIn, &QPropertyAnimation::finished, fadeIn, &QObject::deleteLater);
     QObject::connect(fadeOut, &QPropertyAnimation::finished, fadeOut, &QObject::deleteLater);
-
-    fadeIn->start(QAbstractAnimation::DeleteWhenStopped);
     fadeOut->start(QAbstractAnimation::DeleteWhenStopped);
+
+    // Fade in new slot: start immediately if surface ready, otherwise wait for ready signal
+    auto *interface = TreelandWallpaperSurfaceInterfaceV1::get(newSlot->source());
+    if (interface && interface->wallpaperReady()) {
+        startFadeIn(newSlot);
+    } else if (interface) {
+        connect(interface,
+                &TreelandWallpaperSurfaceInterfaceV1::ready,
+                this,
+                [this, newSlot]() {
+                    if (m_currentSlot == newSlot)
+                        startFadeIn(newSlot);
+                },
+                Qt::SingleShotConnection);
+    }
+}
+
+void WallpaperSwitcherItem::startFadeIn(WallpaperSlot *slot)
+{
+    auto *anim = new QPropertyAnimation(slot, "opacity");
+    anim->setDuration(m_opacityDuration);
+    anim->setStartValue(0.0);
+    anim->setEndValue(1.0);
+    anim->setEasingCurve(QEasingCurve::InOutQuad);
+    QObject::connect(anim, &QPropertyAnimation::finished, anim, &QObject::deleteLater);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void WallpaperSwitcherItem::onAnimationFinished()

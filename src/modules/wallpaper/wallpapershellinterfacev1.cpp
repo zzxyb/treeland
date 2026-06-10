@@ -170,10 +170,10 @@ void TreelandWallpaperSurfaceInterfaceV1Private::ready(Resource *resource)
         wallpaperReady = true;
         Q_EMIT q->ready();
     } else {
-        QObject::connect(q->wSurface(), &WSurface::mappedChanged, q, [this]() {
+        QObject::connect(q->wSurface(), &WSurface::commit, q, [this](quint32 committedState) {
             wallpaperReady = true;
             Q_EMIT q->ready();
-        });
+        }, Qt::SingleShotConnection);
     }
 }
 
