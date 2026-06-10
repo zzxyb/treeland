@@ -72,6 +72,7 @@ Q_SIGNALS:
 private:
     friend class WallpaperSlot;
     void handleWallpaperUpdate();
+    void handleWorkspaceAdded();
     void switchToNewSlot();
     void onAnimationFinished();
 

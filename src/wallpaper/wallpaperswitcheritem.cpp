@@ -27,6 +27,8 @@ class WallpaperSlot : public WSurfaceItemContent
 {
     Q_OBJECT
 
+    friend class WallpaperSwitcherItem;
+
 public:
     WallpaperSlot(WallpaperSwitcherItem::WallpaperRole role,
                   QQuickItem *parent)
@@ -34,19 +36,6 @@ public:
         , m_role(role)
     {
         setLive(true);
-
-        connect(Helper::instance()->m_wallpaperManager,
-                &WallpaperManager::updateWallpaper,
-                this,
-                &WallpaperSlot::scheduleUpdate);
-        connect(Helper::instance()->shellHandler()->wallpaperShell(),
-                &TreelandWallpaperShellInterfaceV1::wallpaperSurfaceAdded,
-                this,
-                &WallpaperSlot::onWallpaperSurfaceAdded);
-        connect(Helper::instance()->workspace(),
-                &Workspace::workspaceAdded,
-                this,
-                &WallpaperSlot::handleWorkspaceAdded);
     }
 
     void setSlotRole(WallpaperSwitcherItem::WallpaperRole role) { m_role = role; }
@@ -117,29 +106,6 @@ public:
         }
     }
 
-    void onWallpaperSurfaceAdded(TreelandWallpaperSurfaceInterfaceV1 *interface)
-    {
-        if (interface->wallpaperReady()) {
-            scheduleUpdate();
-        } else {
-            connect(interface,
-                    &TreelandWallpaperSurfaceInterfaceV1::ready,
-                    this,
-                    &WallpaperSlot::scheduleUpdate,
-                    Qt::SingleShotConnection);
-        }
-    }
-
-    void handleWorkspaceAdded()
-    {
-        if (m_role == WallpaperSwitcherItem::Lockscreen)
-            return;
-        if (!m_output || !m_workspace)
-            return;
-        Helper::instance()->m_wallpaperManager->syncAddWorkspace();
-        updateSurface();
-    }
-
     void setPlay(bool value)
     {
         auto *interface = TreelandWallpaperSurfaceInterfaceV1::get(m_source);
@@ -183,6 +149,10 @@ WallpaperSwitcherItem::WallpaperSwitcherItem(QQuickItem *parent)
             &TreelandWallpaperShellInterfaceV1::wallpaperSurfaceAdded,
             this,
             &WallpaperSwitcherItem::handleWallpaperUpdate);
+    connect(Helper::instance()->workspace(),
+            &Workspace::workspaceAdded,
+            this,
+            &WallpaperSwitcherItem::handleWorkspaceAdded);
 }
 
 WallpaperSwitcherItem::~WallpaperSwitcherItem()
@@ -295,8 +265,37 @@ void WallpaperSwitcherItem::slowDown()
 
 void WallpaperSwitcherItem::handleWallpaperUpdate()
 {
+    if (!m_output || !m_currentSlot)
+        return;
+
+    auto config = Helper::instance()->m_wallpaperManager->getOutputConfig(m_output->nativeHandle());
+    QString newSource;
+
+    if (m_wallpaperRole == Lockscreen) {
+        newSource = config.lockscreenWallpaper;
+    } else if (m_workspace) {
+        for (const auto &wsConfig : std::as_const(config.workspaces)) {
+            if (wsConfig.workspaceId == m_workspace->id()) {
+                newSource = wsConfig.desktopWallpaper;
+                break;
+            }
+        }
+    }
+
+    if (newSource == m_currentSlot->source())
+        return;
+
     qCDebug(qLcWallpaperSwitcher) << "Wallpaper update triggered, switching to new slot";
     switchToNewSlot();
+}
+
+void WallpaperSwitcherItem::handleWorkspaceAdded()
+{
+    if (m_wallpaperRole == WallpaperSwitcherItem::Lockscreen)
+        return;
+    Helper::instance()->m_wallpaperManager->syncAddWorkspace();
+    if (m_currentSlot)
+        m_currentSlot->scheduleUpdate();
 }
 
 void WallpaperSwitcherItem::switchToNewSlot()
