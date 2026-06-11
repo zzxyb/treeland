@@ -82,6 +82,8 @@ public:
     QString devicePath() const;
 
     bool isVirtual() const;
+    bool isLibInputMouse() const;
+    bool isLibisTouchPad() const;
 
 private:
     friend class QWlrootsIntegration;
