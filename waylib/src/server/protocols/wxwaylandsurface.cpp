@@ -389,6 +389,12 @@ bool WXWaylandSurface::isMaximized() const
     return d->maximized;
 }
 
+bool WXWaylandSurface::isMaximizeRequested() const
+{
+    W_DC(WXWaylandSurface);
+    return d->isMaximized();
+}
+
 bool WXWaylandSurface::isMinimized() const
 {
     W_DC(WXWaylandSurface);
@@ -399,6 +405,12 @@ bool WXWaylandSurface::isFullScreen() const
 {
     W_DC(WXWaylandSurface);
     return d->fullscreen;
+}
+
+bool WXWaylandSurface::isFullScreenRequested() const
+{
+    W_DC(WXWaylandSurface);
+    return d->nativeHandle()->fullscreen;
 }
 
 bool WXWaylandSurface::isActivated() const

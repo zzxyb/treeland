@@ -760,6 +760,18 @@ void ShellHandler::ensureXwaylandWrapper(WXWaylandSurface *surface, const QStrin
                          updateSurfaceWithParentContainer);
     updateSurfaceWithParentContainer();
     Q_ASSERT(wrapper->parentItem());
+
+    const auto initialState = surface->isFullScreenRequested()
+        ? SurfaceWrapper::State::Fullscreen
+        : surface->isMaximizeRequested() ? SurfaceWrapper::State::Maximized
+                                         : SurfaceWrapper::State::Normal;
+    if (isNewWrapper && initialState != SurfaceWrapper::State::Normal) {
+        if (initialState == SurfaceWrapper::State::Fullscreen)
+            wrapper->enterFullscreen();
+        else
+            wrapper->maximize();
+    }
+
     setupSurfaceWindowMenu(wrapper);
     // Only setup active watcher for newly created wrappers;
     // prelaunch splash wrappers already have it set up in createPrelaunchSplash

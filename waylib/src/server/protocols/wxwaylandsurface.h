@@ -93,8 +93,10 @@ public:
     bool isToplevel() const;
     bool hasChild() const;
     bool isMaximized() const override;
+    bool isMaximizeRequested() const;
     bool isMinimized() const override;
     bool isFullScreen() const override;
+    bool isFullScreenRequested() const;
     bool isActivated() const override;
 
     bool hasCapability(Capability cap) const override;
