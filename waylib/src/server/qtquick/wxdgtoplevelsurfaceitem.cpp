@@ -77,11 +77,13 @@ void WXdgToplevelSurfaceItem::onSurfaceCommit()
     }
 
     auto xdg_surface = toplevelSurface()->handle()->handle()->base;
-    if (xdg_surface->initial_commit) {
+    if (xdg_surface->initial_commit && !toplevelSurface()->isMaximizeRequested()
+        && !toplevelSurface()->isFullScreenRequested()) {
         /* When an xdg_surface performs an initial commit, the compositor must
          * reply with a configure so the client can map the surface.
          * configures the xdg_toplevel with 0,0 size to let the client pick the
-         * dimensions itself. */
+         * dimensions itself. A requested maximized/fullscreen state is configured
+         * by the compositor with its output geometry instead. */
         toplevelSurface()->handle()->set_size(0, 0);
     }
 }

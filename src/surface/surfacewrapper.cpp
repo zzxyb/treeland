@@ -19,6 +19,7 @@
 #include <woutputrenderwindow.h>
 #include <wsocket.h>
 #include <wxdgpopupsurfaceitem.h>
+#include <wxdgtoplevelsurface.h>
 #include <wxdgtoplevelsurfaceitem.h>
 #include <wxwaylandsurface.h>
 #include <wxwaylandsurfaceitem.h>
@@ -316,12 +317,24 @@ void SurfaceWrapper::setup()
         m_shellSurface->safeConnect(&WToplevelSurface::requestCancelMinimize, this, [this]() {
             restoreFromMinimized();
         });
-        m_shellSurface->safeConnect(&WToplevelSurface::requestMaximize,
-                                    this,
-                                    &SurfaceWrapper::maximize);
-        m_shellSurface->safeConnect(&WToplevelSurface::requestCancelMaximize,
-                                    this,
-                                    &SurfaceWrapper::unmaximize);
+        m_shellSurface->safeConnect(&WToplevelSurface::requestMaximize, this, [this] {
+            if (m_type == Type::XdgToplevel && surface() && !surface()->mapped()) {
+                auto *xdgSurface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data());
+                if (xdgSurface->isInitialized())
+                    setSurfaceStateDirectly(State::Maximized);
+                return;
+            }
+            maximize();
+        });
+        m_shellSurface->safeConnect(&WToplevelSurface::requestCancelMaximize, this, [this] {
+            if (m_type == Type::XdgToplevel && surface() && !surface()->mapped()) {
+                auto *xdgSurface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data());
+                if (xdgSurface->isInitialized())
+                    setSurfaceStateDirectly(State::Normal);
+                return;
+            }
+            unmaximize();
+        });
         m_shellSurface->safeConnect(&WToplevelSurface::requestMove, this, [this]() {
             Q_EMIT moveRequested();
         });
@@ -330,12 +343,24 @@ void SurfaceWrapper::setup()
                                     [this](WSeat *, Qt::Edges edge, quint32) {
                                         Q_EMIT resizeRequested(edge);
                                     });
-        m_shellSurface->safeConnect(&WToplevelSurface::requestFullscreen,
-                                    this,
-                                    &SurfaceWrapper::enterFullscreen);
-        m_shellSurface->safeConnect(&WToplevelSurface::requestCancelFullscreen,
-                                    this,
-                                    &SurfaceWrapper::leaveFullscreen);
+        m_shellSurface->safeConnect(&WToplevelSurface::requestFullscreen, this, [this] {
+            if (m_type == Type::XdgToplevel && surface() && !surface()->mapped()) {
+                auto *xdgSurface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data());
+                if (xdgSurface->isInitialized())
+                    setSurfaceStateDirectly(State::Fullscreen);
+                return;
+            }
+            enterFullscreen();
+        });
+        m_shellSurface->safeConnect(&WToplevelSurface::requestCancelFullscreen, this, [this] {
+            if (m_type == Type::XdgToplevel && surface() && !surface()->mapped()) {
+                auto *xdgSurface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data());
+                if (xdgSurface->isInitialized())
+                    setSurfaceStateDirectly(m_previousSurfaceState);
+                return;
+            }
+            leaveFullscreen();
+        });
 
         if (m_type == Type::XdgToplevel) {
             m_shellSurface->safeConnect(&WToplevelSurface::requestShowWindowMenu,
@@ -349,6 +374,23 @@ void SurfaceWrapper::setup()
     m_shellSurface->surface()->safeConnect(&WSurface::mappedChanged,
                                            this,
                                            &SurfaceWrapper::onMappedChanged);
+    if (m_type == Type::XdgToplevel) {
+        m_shellSurface->surface()->safeConnect(&WSurface::commit, this, [this] {
+            if (!surface() || surface()->mapped())
+                return;
+
+            auto *xdgSurface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data());
+            if (!xdgSurface || !xdgSurface->isInitialized())
+                return;
+            if (xdgSurface->isFullScreenRequested()) {
+                setSurfaceStateDirectly(State::Fullscreen);
+            } else if (xdgSurface->isMaximizeRequested() && isMaximizable()) {
+                setSurfaceStateDirectly(State::Maximized);
+            } else if (m_surfaceState == State::Maximized || m_surfaceState == State::Fullscreen) {
+                setSurfaceStateDirectly(State::Normal);
+            }
+        });
+    }
 
     Q_EMIT surfaceItemCreated();
 
@@ -595,10 +637,25 @@ void SurfaceWrapper::syncPrelaunchMappedState()
         m_prelaunchOutputs.clear();
     }
 
-    if (auto *xwaylandSurface = qobject_cast<WXWaylandSurface *>(m_shellSurface.data())) {
-        if (xwaylandSurface->isFullScreenRequested()) {
+    const bool fullscreenRequested = [this] {
+        if (auto *surface = qobject_cast<WXWaylandSurface *>(m_shellSurface.data()))
+            return surface->isFullScreenRequested();
+        if (auto *surface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data()))
+            return surface->isFullScreenRequested();
+        return false;
+    }();
+    const bool maximizeRequested = [this] {
+        if (auto *surface = qobject_cast<WXWaylandSurface *>(m_shellSurface.data()))
+            return surface->isMaximizeRequested();
+        if (auto *surface = qobject_cast<WXdgToplevelSurface *>(m_shellSurface.data()))
+            return surface->isMaximizeRequested();
+        return false;
+    }();
+
+    if (m_type == Type::XWayland || m_type == Type::XdgToplevel) {
+        if (fullscreenRequested) {
             setSurfaceStateDirectly(State::Fullscreen);
-        } else if (xwaylandSurface->isMaximizeRequested() && isMaximizable()) {
+        } else if (maximizeRequested && isMaximizable()) {
             setSurfaceStateDirectly(State::Maximized);
         }
 

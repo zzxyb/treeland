@@ -289,6 +289,12 @@ bool WXdgToplevelSurface::isMaximized() const
     return d->maximized;
 }
 
+bool WXdgToplevelSurface::isMaximizeRequested() const
+{
+    W_DC(WXdgToplevelSurface);
+    return d->nativeHandle()->requested.maximized;
+}
+
 bool WXdgToplevelSurface::isMinimized() const
 {
     W_DC(WXdgToplevelSurface);
@@ -299,6 +305,12 @@ bool WXdgToplevelSurface::isFullScreen() const
 {
     W_DC(WXdgToplevelSurface);
     return d->fullscreen;
+}
+
+bool WXdgToplevelSurface::isFullScreenRequested() const
+{
+    W_DC(WXdgToplevelSurface);
+    return d->nativeHandle()->requested.fullscreen;
 }
 
 QRect WXdgToplevelSurface::getContentGeometry() const

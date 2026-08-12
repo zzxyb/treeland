@@ -44,8 +44,10 @@ public:
     bool isResizeing() const;
     bool isActivated() const override;
     bool isMaximized() const override;
+    bool isMaximizeRequested() const;
     bool isMinimized() const override;
     bool isFullScreen() const override;
+    bool isFullScreenRequested() const;
 
     QRect getContentGeometry() const override;
 
