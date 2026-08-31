@@ -131,6 +131,29 @@ public:
         return handle()->keyboard_state.focused_surface;
     }
 
+    inline bool hasPressedPointerButton() const {
+        return cursor && cursor->state() != Qt::NoButton;
+    }
+
+    inline bool keepsPointerFocusOnPressedSurface() const {
+        return hasPressedPointerButton() && !wlr_seat_pointer_has_grab(handle());
+    }
+
+    inline bool doNotifyMotionToPointerFocus(QSinglePointEvent *event) {
+        auto *focusItem = qobject_cast<QQuickItem *>(pointerFocusEventObject.data());
+        auto *focusSurface = WSurface::fromHandle(pointerFocusSurface());
+        if (!focusItem || !focusSurface)
+            return false;
+
+        // Qt hit-testing can move to another item while a client is moving its
+        // own XWayland window. Keep the implicit pointer grab and calculate the
+        // coordinates against the item which received the original press.
+        return doNotifyMotion(focusSurface,
+                              focusItem,
+                              focusItem->mapFromScene(event->scenePosition()),
+                              event->timestamp());
+    }
+
     inline bool doNotifyMotion(WSurface *target, QObject *eventObject, QPointF localPos, uint32_t timestamp) {
         if (target) {
             if (pointerFocusSurface()) {
@@ -949,6 +972,12 @@ bool WSeat::sendEvent(WSurface *target, QObject *shellObject, QObject *eventObje
 
     switch (event->type()) {
     case QEvent::HoverEnter: {
+        // Match wlroots compositors' implicit-grab behavior: pointer focus
+        // stays on the surface where the button was pressed until release.
+        if (d->keepsPointerFocusOnPressedSurface() && d->pointerFocusEventObject
+            && d->pointerFocusEventObject != eventObject) {
+            return true;
+        }
         auto e = static_cast<QHoverEvent*>(event);
         return d->doEnter(target, eventObject, e->position());
     }
@@ -958,6 +987,8 @@ bool WSeat::sendEvent(WSurface *target, QObject *shellObject, QObject *eventObje
         // can't take pointer focus, so if the eventObject is not pointerFocusEventObject,
         // we should don't do anything.
         if (d->pointerFocusEventObject != eventObject)
+            break;
+        if (d->keepsPointerFocusOnPressedSurface())
             break;
         auto nativeTarget = target->handle();
         Q_ASSERT(!currentFocus || d->oldPointerFocusSurface == nativeTarget || currentFocus == nativeTarget);
@@ -974,6 +1005,13 @@ bool WSeat::sendEvent(WSurface *target, QObject *shellObject, QObject *eventObje
         auto e = static_cast<QMouseEvent*>(event);
         Q_ASSERT(e->source() == Qt::MouseEventNotSynthesized);
         d->doNotifyButton(WCursor::toNativeButton(e->button()), WL_POINTER_BUTTON_STATE_RELEASED, event->timestamp());
+        if (!d->hasPressedPointerButton() && d->pointerFocusEventObject
+            && inputDevice->hoverTarget() != d->pointerFocusEventObject) {
+            // A leave suppressed by the implicit grab will not necessarily be
+            // delivered again by Qt. Drop the stale focus after the release;
+            // the current hover target will enter on the next pointer event.
+            d->doClearPointerFocus();
+        }
         break;
     }
     case QEvent::HoverMove: Q_FALLTHROUGH();
@@ -984,8 +1022,13 @@ bool WSeat::sendEvent(WSurface *target, QObject *shellObject, QObject *eventObje
         if (d->pointerFocusEventObject) {
             // received HoverEnter event of next eventObject before HoverLeave event of last eventObject,
             // so we should check the eventObject is still the same, if not, we should ignore this event
-            if (d->pointerFocusEventObject != eventObject)
+            if (d->pointerFocusEventObject != eventObject) {
+                if (event->type() == QEvent::MouseMove
+                    && d->keepsPointerFocusOnPressedSurface()) {
+                    d->doNotifyMotionToPointerFocus(e);
+                }
                 break;
+            }
         }
         d->doNotifyMotion(target, eventObject, e->position(), e->timestamp());
         break;
