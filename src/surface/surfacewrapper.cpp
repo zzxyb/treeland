@@ -1757,7 +1757,7 @@ void SurfaceWrapper::onMappedChanged()
             if (m_coverContent) {
                 m_coverContent->setVisible(true);
             }
-        } else {
+        } else if (!isMinimized()) {
             createNewOrClose(CLOSE_ANIMATION);
         }
     }
@@ -1889,7 +1889,7 @@ void SurfaceWrapper::minimize(bool onAnimation)
     if (m_surfaceState == State::Minimized)
         return;
     setSurfaceState(State::Minimized);
-    if (onAnimation)
+    if (onAnimation && m_type != Type::XWayland)
         startMinimizeAnimation(iconGeometry(), CLOSE_ANIMATION);
 }
 
@@ -1901,7 +1901,7 @@ void SurfaceWrapper::restoreFromMinimized(bool onAnimation)
         setHideByShowDesk(true);
 
     doSetSurfaceState(m_previousSurfaceState);
-    if (onAnimation)
+    if (onAnimation && m_type != Type::XWayland)
         startMinimizeAnimation(iconGeometry(), OPEN_ANIMATION);
 }
 
