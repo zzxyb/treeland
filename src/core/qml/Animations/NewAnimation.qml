@@ -23,6 +23,7 @@ Item {
 
     x: target.x
     y: target.y
+    z: target.z
     width: target.width
     height: target.height
     transform: [

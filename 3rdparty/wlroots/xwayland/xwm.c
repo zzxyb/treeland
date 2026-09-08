@@ -1424,6 +1424,16 @@ static void xwm_handle_map_notify(struct wlr_xwm *xwm,
 	xwm_update_override_redirect(xsurface, ev->override_redirect);
 
 	if (!xsurface->override_redirect) {
+		// The surface may not be associated yet. Read the client's initial
+		// state before set_withdrawn() publishes our copy of _NET_WM_STATE.
+		xcb_get_property_cookie_t cookie =
+			get_property(xwm, xsurface->window_id, xwm->atoms[NET_WM_STATE]);
+		xcb_get_property_reply_t *reply =
+			xcb_get_property_reply(xwm->xcb_conn, cookie, NULL);
+		if (reply != NULL) {
+			read_surface_net_wm_state(xwm, xsurface, reply);
+			free(reply);
+		}
 		wlr_xwayland_surface_set_withdrawn(xsurface, false);
 		wlr_xwayland_surface_restack(xsurface, NULL, XCB_STACK_MODE_BELOW);
 	}

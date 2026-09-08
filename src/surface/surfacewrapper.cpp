@@ -31,6 +31,7 @@
 
 #define OPEN_ANIMATION 1
 #define CLOSE_ANIMATION 2
+// These layers are relative to the workspace, which is above the desktop.
 #define ALWAYSONTOPLAYER 1
 #define ALWAYSONBOTTOMLAYER -1
 
@@ -2519,8 +2520,8 @@ void SurfaceWrapper::updateStackingLayer()
     bool newExplicitAlwaysOnBottom = m_alwaysOnBottom;
     if (m_parentSurface) {
         newExplicitAlwaysOnTop += m_parentSurface->m_explicitAlwaysOnTop;
-        newExplicitAlwaysOnBottom = newExplicitAlwaysOnBottom
-            || m_parentSurface->m_explicitAlwaysOnBottom;
+        // A transient must never fall below its parent, even if it requests BELOW.
+        newExplicitAlwaysOnBottom = m_parentSurface->m_explicitAlwaysOnBottom;
     }
 
     if (newExplicitAlwaysOnTop)
@@ -2546,13 +2547,14 @@ void SurfaceWrapper::updateXWaylandStackingState()
 
     const bool above = xwaylandSurface->isAbove();
     const bool below = !above && xwaylandSurface->isBelow();
-    setAlwaysOnBottom(below);
-    setAlwaysOnTop(above);
-    if (above) {
-        stackToLast();
-    } else if (below) {
-        stackToFirst();
-    }
+    const bool aboveChanged = m_alwaysOnTop != above;
+    m_alwaysOnTop = above;
+    m_alwaysOnBottom = below;
+    // Apply both flags together. Z orders the workspace's window layers without
+    // reordering siblings (which may include a running window animation).
+    updateStackingLayer();
+    if (aboveChanged)
+        Q_EMIT alwaysOnTopChanged();
 }
 
 void SurfaceWrapper::updateSizeCapabilities()

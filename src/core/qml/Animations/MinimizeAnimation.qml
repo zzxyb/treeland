@@ -16,6 +16,7 @@ Item {
     signal finished
 
     clip: false
+    z: target.z
 
     required property var target
     required property rect position

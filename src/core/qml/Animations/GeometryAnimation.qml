@@ -20,6 +20,7 @@ Item {
 
     x: fromGeometry.x
     y: fromGeometry.y
+    z: surface.z
     width: fromGeometry.width
     height: fromGeometry.height
 
