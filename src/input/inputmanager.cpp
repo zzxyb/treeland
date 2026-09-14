@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "inputmanager.h"
+#include "core/dconfigmanager.h"
 #include "seatuserconfig.hpp"
 #include "treelandconfig.hpp"
 #include "helper.h"
@@ -28,9 +29,9 @@ bool isSeatDConfigInitialized(SeatUserDConfig *config)
         return false;
 
 #if SEATUSERDCONFIG_DCONFIG_FILE_VERSION_MINOR > 0
-    return config->isInitializeSucceeded();
+    return config->isInitializeSucceeded() || config->isInitializeFailed();
 #else
-    return config->isInitializeSucceed();
+    return config->isInitializeSucceed() || config->isInitializeFailed();
 #endif
 }
 
@@ -55,30 +56,19 @@ InputManager::InputManager(QObject *parent)
 
 InputManager::~InputManager()
 {
-    if (m_seatDConfig) {
-        delete m_seatDConfig;
-    }
 }
 
 void InputManager::setupSeatUserConfig(const QString &userName)
 {
-    if (m_seatDConfig) {
-        delete m_seatDConfig;
-    }
+    auto *configManager = DConfigManager::instance();
+    Q_ASSERT(configManager);
 
-    m_seatDConfig = SeatUserDConfig::createByName("org.deepin.dde.treeland.user.seat",
-                                                   "org.deepin.dde.treeland",
-                                                   "/" + userName);
+    auto *config = configManager->seatUserConfig(userName);
+    Q_ASSERT(config);
+    Q_ASSERT(isSeatDConfigInitialized(config));
 
-    if (isSeatDConfigInitialized(m_seatDConfig)) {
-        onConfigInitializeSucceed();
-    } else {
-        connect(m_seatDConfig,
-                &SeatUserDConfig::configInitializeSucceed,
-                this,
-                &InputManager::onConfigInitializeSucceed,
-                Qt::SingleShotConnection);
-    }
+    m_seatDConfig = config;
+    onConfigInitializeSucceed();
 }
 
 void InputManager::onConfigInitializeSucceed()
@@ -98,22 +88,16 @@ void InputManager::onConfigInitializeSucceed()
     connect(backend,
             &WBackend::inputAdded,
             this,
-            &InputManager::onInputAdded);
+            &InputManager::onInputAdded,
+            Qt::UniqueConnection);
     const auto inputDevices = backend->inputDeviceList();
     for (WInputDevice *device : inputDevices) {
         onInputAdded(device);
     }
 
     auto *globalConfig = Helper::instance()->globalConfig();
-    if (isTreelandConfigInitialized(globalConfig)) {
-        applyNumLockToKeyboards();
-    } else {
-        connect(globalConfig,
-                &TreelandConfig::configInitializeSucceed,
-                this,
-                &InputManager::applyNumLockToKeyboards,
-                Qt::SingleShotConnection);
-    }
+    Q_ASSERT(isTreelandConfigInitialized(globalConfig));
+    applyNumLockToKeyboards();
 }
 
 void InputManager::onMouseSettingsCreated(MouseSettingsInterfaceV1 *interface)
@@ -136,32 +120,6 @@ void InputManager::onKeyboardSettingsCreated(KeyboardSettingsInterfaceV1 *interf
 {
     if (!m_seatDConfig)
         return;
-
-    auto *globalConfig = Helper::instance()->globalConfig();
-    const bool seatConfigReady = isSeatDConfigInitialized(m_seatDConfig);
-    const bool globalConfigReady = isTreelandConfigInitialized(globalConfig);
-    if (!seatConfigReady || !globalConfigReady) {
-        auto retry = [this, interface] {
-            initializeKeyboardSettings(interface);
-        };
-
-        if (!seatConfigReady) {
-            connect(m_seatDConfig,
-                    &SeatUserDConfig::configInitializeSucceed,
-                    interface,
-                    retry,
-                    Qt::SingleShotConnection);
-        }
-
-        if (!globalConfigReady) {
-            connect(globalConfig,
-                    &TreelandConfig::configInitializeSucceed,
-                    interface,
-                    retry,
-                    Qt::SingleShotConnection);
-        }
-        return;
-    }
 
     initializeKeyboardSettings(interface);
 }
