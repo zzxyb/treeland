@@ -98,6 +98,12 @@ public:
             detachInputDevice(device);
 
         destroyKeyboardGroup();
+
+        free(const_cast<char*>(xkbRules.rules));
+        free(const_cast<char*>(xkbRules.layout));
+        free(const_cast<char*>(xkbRules.model));
+        free(const_cast<char*>(xkbRules.variant));
+        free(const_cast<char*>(xkbRules.options));
     }
 
     // Release the keyboard group and its WInputDevice wrapper. Shared by
@@ -387,6 +393,7 @@ public:
     qreal lastScale = 1.0;
     wlr_keyboard_group *group = nullptr;
     WInputDevice *groupkeyboardDevice = nullptr;
+    struct xkb_rule_names xkbRules = {};
 
     struct EventState {
         // Don't use it, its may be a invalid pointer
@@ -673,11 +680,9 @@ void WSeatPrivate::attachInputDevice(WInputDevice *device)
         auto keyboard = wlr_keyboard_from_input_device(device->handle());
 
         if (device == groupkeyboardDevice || device->isVirtual()) {
-            /* We need to prepare an XKB keymap and assign it to the keyboard.
-             * This assumes the defaults (e.g. layout = "us"). */
-            struct xkb_rule_names rules = {};
+            /* We need to prepare an XKB keymap and assign it to the keyboard. */
             struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-            struct xkb_keymap *keymap = xkb_map_new_from_names(context, &rules,
+            struct xkb_keymap *keymap = xkb_map_new_from_names(context, &xkbRules,
                                                                XKB_KEYMAP_COMPILE_NO_FLAGS);
             wlr_keyboard_set_keymap(keyboard, keymap);
             xkb_keymap_unref(keymap);
@@ -702,9 +707,8 @@ void WSeatPrivate::attachInputDevice(WInputDevice *device)
                 qCWarning(lcWlSeat,
                           "WSeat: group keyboard has no keymap for physical keyboard '%s'",
                           qPrintable(device->name()));
-                struct xkb_rule_names rules = {};
                 struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-                struct xkb_keymap *keymap = xkb_map_new_from_names(context, &rules,
+                struct xkb_keymap *keymap = xkb_map_new_from_names(context, &xkbRules,
                                                                    XKB_KEYMAP_COMPILE_NO_FLAGS);
                 wlr_keyboard_set_keymap(keyboard, keymap);
                 xkb_keymap_unref(keymap);
@@ -1191,6 +1195,59 @@ void WSeat::setKeyboard(WInputDevice *newKeyboard)
     Q_ASSERT(newKeyboard->handle()->type == WLR_INPUT_DEVICE_KEYBOARD);
     wlr_seat_set_keyboard(d->handle(), wlr_keyboard_from_input_device(newKeyboard->handle()));
     Q_EMIT this->keyboardChanged();
+}
+
+void WSeat::setXkbRuleNames(const struct xkb_rule_names &rules)
+{
+    W_D(WSeat);
+
+    free(const_cast<char*>(d->xkbRules.rules));
+    free(const_cast<char*>(d->xkbRules.layout));
+    free(const_cast<char*>(d->xkbRules.model));
+    free(const_cast<char*>(d->xkbRules.variant));
+    free(const_cast<char*>(d->xkbRules.options));
+
+    d->xkbRules.rules = rules.rules ? strdup(rules.rules) : nullptr;
+    d->xkbRules.layout = rules.layout ? strdup(rules.layout) : nullptr;
+    d->xkbRules.model = rules.model ? strdup(rules.model) : nullptr;
+    d->xkbRules.variant = rules.variant ? strdup(rules.variant) : nullptr;
+    d->xkbRules.options = rules.options ? strdup(rules.options) : nullptr;
+}
+
+void WSeat::applyXkbConfig()
+{
+    W_D(WSeat);
+
+    struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (!context) {
+        qCWarning(lcWlSeat) << "Failed to create XKB context";
+        return;
+    }
+
+    struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &d->xkbRules,
+                                                           XKB_KEYMAP_COMPILE_NO_FLAGS);
+    xkb_context_unref(context);
+    if (!keymap) {
+        qCWarning(lcWlSeat) << "Failed to compile XKB keymap from rule names";
+        return;
+    }
+
+    if (d->groupkeyboardDevice && d->groupkeyboardDevice->handle()->type == WLR_INPUT_DEVICE_KEYBOARD) {
+        auto *keyboard = wlr_keyboard_from_input_device(d->groupkeyboardDevice->handle());
+        wlr_keyboard_set_keymap(keyboard, keymap);
+    }
+
+    for (auto *device : std::as_const(d->deviceList)) {
+        if (device->type() != WInputDevice::Type::Keyboard)
+            continue;
+        if (device->handle()->type != WLR_INPUT_DEVICE_KEYBOARD)
+            continue;
+        auto *keyboard = wlr_keyboard_from_input_device(device->handle());
+        if (keyboard)
+            wlr_keyboard_set_keymap(keyboard, keymap);
+    }
+
+    xkb_keymap_unref(keymap);
 }
 
 bool WSeat::alwaysUpdateHoverTarget() const
