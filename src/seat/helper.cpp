@@ -1966,6 +1966,10 @@ void Helper::init(Treeland::Treeland *treeland)
                 &TreelandUserConfig::cursorSizeChanged,
                 m_sessionManager,
                 &SessionManager::syncActiveSessionCursorSettings);
+        connect(m_config.get(),
+                &TreelandUserConfig::windowRadiusChanged,
+                m_sessionManager,
+                &SessionManager::syncActiveSessionWindowRadius);
         auto user = m_userModel->currentUser();
         m_personalizationInterfaceV1->setUserId(user ? user->UID() : getuid());
         // TODO(YaoBing Xiao): remove "dde"

@@ -173,7 +173,12 @@ public:
         Net_IconThemeName,
         Net_SoundThemeName,
         Net_EnableInputFeedbackSounds,
-        Net_PreferDarkTheme
+        Net_PreferDarkTheme,
+
+        Qt_ActiveColor,
+        Qt_DarkActiveColor,
+
+        DTK_WindowRadius
     };
     Q_ENUM(XSettingsKey)
 

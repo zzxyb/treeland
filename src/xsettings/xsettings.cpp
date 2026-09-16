@@ -104,6 +104,11 @@ QByteArray XSettings::toByteArray(XSettingsKey key)
     case Net_EnableInputFeedbackSounds: return QByteArrayLiteral("Net/EnableInputFeedbackSounds");
     case Net_PreferDarkTheme: return QByteArrayLiteral("Net/PreferDarkTheme");
 
+    case Qt_ActiveColor: return QByteArrayLiteral("Qt/ActiveColor");
+    case Qt_DarkActiveColor: return QByteArrayLiteral("Qt/DarkActiveColor");
+
+    case DTK_WindowRadius: return QByteArrayLiteral("DTK/WindowRadius");
+
     default: return QByteArrayLiteral("");
     }
 }

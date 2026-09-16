@@ -43,6 +43,26 @@ static void applyCursorSettings(SettingManager *settingManager, const QString &t
     }
 }
 
+static void applyWindowRadius(SettingManager *settingManager, int radius)
+{
+    if (!settingManager) {
+        qCDebug(lcTlXsettings) << "Skip window radius sync: no SettingManager";
+        return;
+    }
+
+    const bool queued = QMetaObject::invokeMethod(
+        settingManager,
+        [settingManager, radius]() {
+            settingManager->setWindowRadius(radius);
+            settingManager->apply();
+        },
+        Qt::QueuedConnection);
+    if (!queued) {
+        qCWarning(lcTlXsettings) << "Failed to queue window radius sync"
+                                 << "radius:" << radius;
+    }
+}
+
 static xcb_atom_t internAtom(xcb_connection_t *connection, const char *name, bool onlyIfExists)
 {
     if (!name || *name == 0)
@@ -325,13 +345,15 @@ std::shared_ptr<Session> SessionManager::ensureSession(int id, QString username)
                             const QString cursorTheme =
                                 config ? config->cursorThemeName() : QString();
                             const qreal cursorSize = config ? config->cursorSize() : 24;
+                            const int windowRadius = config ? config->windowRadius() : 6;
 
                             const bool queued = QMetaObject::invokeMethod(
                                 settingManager,
-                                [settingManager, scale, cursorTheme, cursorSize]() {
+                                [settingManager, scale, cursorTheme, cursorSize, windowRadius]() {
                                     settingManager->setGlobalScale(scale);
                                     settingManager->setCursorTheme(cursorTheme);
                                     settingManager->setCursorSize(cursorSize);
+                                    settingManager->setWindowRadius(windowRadius);
                                     settingManager->apply();
                                 },
                                 Qt::QueuedConnection);
@@ -518,6 +540,32 @@ void SessionManager::syncActiveSessionCursorSettings()
     applyCursorSettings(session->m_settingManager, config->cursorThemeName(), config->cursorSize());
 }
 
+void SessionManager::syncActiveSessionWindowRadius()
+{
+    const auto session = m_activeSession.lock();
+    if (!session) {
+        qCDebug(lcTlXsettings) << "Skip window radius sync: no active session";
+        return;
+    }
+
+    if (!session->m_settingManager) {
+        qCDebug(lcTlXsettings)
+            << "Skip window radius sync: no SettingManager for session" << session->username();
+        return;
+    }
+
+    auto *helper = Helper::instance();
+    Q_ASSERT(helper);
+
+    const auto *config = helper->config();
+    if (!config) {
+        qCWarning(lcTlXsettings) << "Cannot sync window radius: user config is unavailable";
+        return;
+    }
+
+    applyWindowRadius(session->m_settingManager, config->windowRadius());
+}
+
 /**
  * Update the active session to the given uid, creating it if necessary.
  * This will update XWayland visibility and emit socketFileChanged if the
@@ -572,4 +620,5 @@ void SessionManager::commitActiveUserSession(const ActiveSessionUpdate &update)
 
     qCInfo(lcTlCore) << "Listening on:" << update.session->m_socket->fullServerName();
     syncActiveSessionCursorSettings();
+    syncActiveSessionWindowRadius();
 }

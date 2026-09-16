@@ -38,6 +38,9 @@ public:
     void setGlobalScale(qreal scale);
     qreal globalScale() const;
 
+    void setWindowRadius(int radius);
+    int windowRadius() const;
+
     void apply();
 
 private:
