@@ -4,7 +4,7 @@
 #pragma once
 
 #include <wlr_fwd.h>
-#include <xcb/xcb.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include <WServer>
 #include <wwaylandresource.h>
@@ -91,6 +91,7 @@ public:
 
     QByteArrayView interfaceName() const override;
 
+    void setXkbRulesNames(const struct xkb_rule_names &rules);
 Q_SIGNALS:
     void ready();
     void surfaceAdded(WXWaylandSurface *surface);

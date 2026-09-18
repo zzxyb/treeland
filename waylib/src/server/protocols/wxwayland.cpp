@@ -444,6 +444,38 @@ xcb_connection_t *WXWayland::xcbConnection() const
     return wlr_xwayland_get_xwm_connection(handle());
 }
 
+void WXWayland::setXkbRulesNames(const struct xkb_rule_names &rules)
+{
+    auto *connection = xcbConnection();
+    if (!connection || !xcbScreen())
+        return;
+
+    const xcb_window_t root = xcbScreen()->root;
+    const char *fields[5] = {
+        rules.rules ? rules.rules : "",
+        rules.model ? rules.model : "",
+        rules.layout ? rules.layout : "",
+        rules.variant ? rules.variant : "",
+        rules.options ? rules.options : "",
+    };
+
+    QByteArray data;
+    for (const char *field : fields) {
+        data.append(field);
+        data.append('\0');
+    }
+
+    xcb_change_property(connection,
+                        XCB_PROP_MODE_REPLACE,
+                        root,
+                        atom("_XKB_RULES_NAMES"),
+                        XCB_ATOM_STRING,
+                        8,
+                        data.size(),
+                        data.constData());
+    xcb_flush(connection);
+}
+
 xcb_screen_t *WXWayland::xcbScreen() const
 {
     W_DC(WXWayland);

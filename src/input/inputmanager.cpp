@@ -21,6 +21,7 @@
 #include <wcursor.h>
 #include <winputdevice.h>
 #include <wseat.h>
+#include <wxwayland.h>
 
 namespace {
 
@@ -600,6 +601,13 @@ void InputManager::applyXkbConfig()
         const auto seats = seatManager->seats();
         for (WSeat *seat : seats) {
             seat->setXkbRuleNames(rules);
+        }
+    }
+
+    if (auto *sessionManager = Helper::instance()->sessionManager()) {
+        for (const auto &session : std::as_const(sessionManager->sessions())) {
+            if (auto *xwayland = session->xwayland())
+                xwayland->setXkbRulesNames(rules);
         }
     }
 
