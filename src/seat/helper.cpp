@@ -1830,7 +1830,10 @@ void Helper::updateCurrentUser()
     const QString userName = m_userModel->currentUserName();
     auto *configManager = DConfigManager::instance();
     auto *userConfig = configManager ? configManager->userConfig(userName) : m_config;
-    auto *seatConfig = configManager ? configManager->seatUserConfig(userName) : nullptr;
+    const QString seatName = m_seatManager && m_seatManager->fallbackSeat()
+        ? m_seatManager->fallbackSeat()->name()
+        : QStringLiteral("seat0");
+    auto *seatConfig = configManager ? configManager->seatUserConfig(userName, seatName) : nullptr;
     if (!userConfig) {
         qCWarning(lcTlConfig) << "Cannot switch to user" << userName
                               << "because its DConfig object is unavailable";
