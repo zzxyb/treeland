@@ -435,9 +435,10 @@ bool WSurfaceItemContent::isTextureProvider() const
 
 QSGTextureProvider *WSurfaceItemContent::textureProvider() const
 {
-    if (QQuickItem::isTextureProvider())
-        return QQuickItem::textureProvider();
-
+    // Keep the provider stable when QQuickItem's layer is enabled or disabled.
+    // Returning the layer provider here makes texture consumers sample an
+    // already rendered copy of the surface.  Once the source is shown again,
+    // that extra resampling is especially visible as blurry text.
     return wTextureProvider();
 }
 
