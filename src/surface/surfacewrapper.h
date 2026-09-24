@@ -133,7 +133,8 @@ public:
         UnMinimized = 1 << 1,
         HasInitializeContainer = 1 << 2, // when not in Container, we can't stackToLast
         HasActivateCapability = 1 << 3,  // shellSurface supports Activate capability
-        Full = ((1 << 4) - 1),
+        AcceptKeyboardFocus = 1 << 4,    // set by treeland-dde-shell
+        Full = ((1 << 5) - 1),
     };
     Q_ENUM(ActiveControlState);
     Q_DECLARE_FLAGS(ActiveControlStates, ActiveControlState)
@@ -555,7 +556,8 @@ private:
     bool m_borderVisible = true;
     QRect m_iconGeometry;
     ActiveControlStates m_hasActiveCapability =
-        ActiveControlStates(ActiveControlState::UnMinimized);
+        ActiveControlStates(ActiveControlState::UnMinimized)
+        | ActiveControlStates(ActiveControlState::AcceptKeyboardFocus);
     FocusControlStates m_focusControlStates =
         FocusControlStates(FocusControlState::AcceptKeyboardFocus)
         | FocusControlStates(FocusControlState::UnMinimized);

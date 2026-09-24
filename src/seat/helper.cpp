@@ -2479,6 +2479,16 @@ void Helper::activateSurface(SurfaceWrapper *wrapper,
     if (wrapper && wrapper->isIMCandidatePanel())
         return;
 
+    // A surface which opts out of keyboard focus must not replace the activated
+    // surface either.  Deactivating an XWayland surface clears the XWM
+    // focus_surface, which makes wlroots reject synchronization of its X11
+    // selection even if WSeat continues delivering key events to XWayland.
+    if (wrapper && !wrapper->acceptKeyboardFocus()) {
+        if (raise && wrapper->hasInitializeContainer())
+            wrapper->stackToLast();
+        return;
+    }
+
     // Plain activation: if the deepest modal is minimized, refuse to activate the parent
     // entirely. The user must explicitly unminimize the modal first (e.g., click it).
     SurfaceWrapper *originalWrapper = wrapper;

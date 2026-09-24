@@ -1300,6 +1300,11 @@ void SurfaceWrapper::setAcceptKeyboardFocus(bool accept)
     if (acceptKeyboardFocus() == accept)
         return;
 
+    // The XWayland selection bridge only imports an X11 selection while the
+    // XWM has a focus_surface.  Activating a no-keyboard-focus Wayland surface
+    // would deactivate the previous X11 window and clear that XWM focus even
+    // though WSeat can still route key events to the XWayland Wayland surface.
+    updateHasActiveCapability(ActiveControlState::AcceptKeyboardFocus, accept);
     updateFocusControlState(FocusControlState::AcceptKeyboardFocus, accept);
 }
 

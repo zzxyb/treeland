@@ -106,6 +106,12 @@ void SeatSurfaceManager::onActivatedSurfaceFocusCapabilityChanged()
 
 void SeatSurfaceManager::setKeyboardFocusSurface(SurfaceWrapper *surface, Qt::FocusReason reason)
 {
+    // This is the final entry point for both Helper requests and internal focus
+    // restoration paths.  Do not let the latter bypass the DDE shell opt-out.
+    // A null surface must remain valid so existing focus can still be cleared.
+    if (surface && !surface->acceptKeyboardFocus())
+        return;
+
     if (m_keyboardFocusSurface == surface)
         return;
     Q_ASSERT(m_seat && m_seat->handle());
