@@ -165,6 +165,9 @@ qt_add_qml_module(libtreeland
         core/treeland.h
         core/windowconfigstore.cpp
         core/windowconfigstore.h
+        effects/radiuseffectitem.cpp
+        effects/radiuseffectitem_p.h
+        effects/radiuseffectitem_p_p.h
         $<$<OR:$<NOT:$<BOOL:${DISABLE_DDM}>>,$<BOOL:${EXT_SESSION_LOCK_V1}>>:lockscreen/lockscreen.h>
         $<$<OR:$<NOT:$<BOOL:${DISABLE_DDM}>>,$<BOOL:${EXT_SESSION_LOCK_V1}>>:lockscreen/lockscreen.cpp>
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:greeter/greeterproxy.cpp>
@@ -329,7 +332,6 @@ if (USE_BUILD_TREE_WALLPAPER_FACTORY)
         "TREELAND_WALLPAPER_FACTORY_OUTPUT_PATH=\"${CMAKE_BINARY_DIR}/wallpaper-factory/treeland-wallpaper-factory\""
     )
 endif()
-
 
 # Liquid Glass shaders are used with ShaderEffect, not custom QSGGeometry,
 # so BATCHABLE is unnecessary (it only adds an unused batchable variant).
