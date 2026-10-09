@@ -103,4 +103,7 @@ Q_DECLARE_LOGGING_CATEGORY(lcTlHooks)
 // Debug remote source
 Q_DECLARE_LOGGING_CATEGORY(lcTlDebug)
 
+// Temporary focus diagnosis for BUG-377283
+Q_DECLARE_LOGGING_CATEGORY(xiaoyaobing)
+
 #endif // TREELAND_LOGGING_H

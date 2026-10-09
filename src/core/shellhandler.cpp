@@ -1160,6 +1160,15 @@ void ShellHandler::onSurfaceInactivationRequested(SurfaceWrapper *wrapper)
 
 void ShellHandler::updateSurfaceAcceptKeyboardFocus(SurfaceWrapper *wrapper, bool accept)
 {
+    qCWarning(xiaoyaobing) << "updateSurfaceAcceptKeyboardFocus"
+                           << "surface" << wrapper
+                           << "appId" << wrapper->appId()
+                           << "type" << static_cast<int>(wrapper->type())
+                           << "oldAccept" << wrapper->acceptKeyboardFocus()
+                           << "newAccept" << accept
+                           << "isActivated" << wrapper->isActivated()
+                           << "hasFocusCapability" << wrapper->hasFocusCapability();
+
     if (accept) {
         wrapper->setAcceptKeyboardFocus(true);
         return;
@@ -1181,6 +1190,13 @@ void ShellHandler::updateSurfaceAcceptKeyboardFocus(SurfaceWrapper *wrapper, boo
 
         const bool isActivated = seatContainer->activatedSurface() == wrapper;
         const bool hasKeyboardFocus = seatContainer->keyboardFocusSurface() == wrapper;
+        qCWarning(xiaoyaobing) << "updateSurfaceAcceptKeyboardFocus seat state"
+                               << "seat" << seat
+                               << "activatedSurface" << seatContainer->activatedSurface()
+                               << "keyboardFocusSurface"
+                               << seatContainer->keyboardFocusSurface()
+                               << "isTargetActivated" << isActivated
+                               << "isTargetKeyboardFocus" << hasKeyboardFocus;
         if (!isActivated && !hasKeyboardFocus)
             continue;
 
@@ -1197,6 +1213,12 @@ void ShellHandler::updateSurfaceAcceptKeyboardFocus(SurfaceWrapper *wrapper, boo
             fallback = m_workspace->current()->latestActiveSurface();
         if (fallback && !fallback->acceptKeyboardFocus())
             fallback = nullptr;
+
+        qCWarning(xiaoyaobing) << "updateSurfaceAcceptKeyboardFocus fallback"
+                               << "target" << wrapper
+                               << "fallback" << fallback
+                               << "fallbackAppId" << (fallback ? fallback->appId() : QString())
+                               << "isTargetActivated" << isActivated;
 
         if (isActivated)
             helper->activateSurface(fallback, Qt::OtherFocusReason, seat, false);
@@ -1243,8 +1265,18 @@ void ShellHandler::setupSurfaceActiveWatcher(SurfaceWrapper *wrapper)
         });
     } else { // Xdgtoplevel or X11 or Splash
         connect(wrapper, &SurfaceWrapper::activationRequested, this, [this, wrapper]() {
-            if (!wrapper->acceptKeyboardFocus())
+            qCWarning(xiaoyaobing) << "activationRequested"
+                                   << "surface" << wrapper
+                                   << "appId" << wrapper->appId()
+                                   << "type" << static_cast<int>(wrapper->type())
+                                   << "acceptKeyboardFocus"
+                                   << wrapper->acceptKeyboardFocus()
+                                   << "isActivated" << wrapper->isActivated();
+            if (!wrapper->acceptKeyboardFocus()) {
+                qCWarning(xiaoyaobing)
+                    << "activationRequested ignored non-focusable surface" << wrapper;
                 return;
+            }
 
             if (wrapper->showOnWorkspace(m_workspace->current()->id()))
                 Helper::instance()->activateSurface(wrapper);

@@ -601,6 +601,15 @@ void SurfaceWrapper::setParent(QQuickItem *item)
 
 void SurfaceWrapper::setActivate(bool activate)
 {
+    qCWarning(xiaoyaobing) << "SurfaceWrapper::setActivate"
+                           << "surface" << this
+                           << "appId" << appId()
+                           << "type" << static_cast<int>(m_type)
+                           << "current" << m_isActivated
+                           << "requested" << activate
+                           << "shellSurface" << m_shellSurface
+                           << "shellActivated"
+                           << (m_shellSurface ? m_shellSurface->isActivated() : false);
     if (m_wrapperAboutToRemove)
         return;
     if (m_isActivated == activate)
@@ -635,6 +644,14 @@ void SurfaceWrapper::updateActiveState()
 
 void SurfaceWrapper::setFocus(bool focus, Qt::FocusReason reason)
 {
+    qCWarning(xiaoyaobing) << "SurfaceWrapper::setFocus"
+                           << "surface" << this
+                           << "appId" << appId()
+                           << "focus" << focus
+                           << "reason" << static_cast<int>(reason)
+                           << "surfaceItem" << m_surfaceItem
+                           << "activeFocusBefore"
+                           << (m_surfaceItem ? m_surfaceItem->hasActiveFocus() : false);
     // No surfaceItem in prelaunch mode -> early return
     if (!m_surfaceItem) {
         qCDebug(lcTlSurface) << "setFocus called but m_surfaceItem is null, appId:" << m_appId;

@@ -60,12 +60,24 @@ SeatSurfaceManager::~SeatSurfaceManager()
 void SeatSurfaceManager::setActivatedSurface(SurfaceWrapper *surface, Qt::FocusReason reason)
 {
     Q_UNUSED(reason);
+    qCWarning(xiaoyaobing) << "SeatSurfaceManager::setActivatedSurface"
+                           << "seat" << m_seat
+                           << "current" << m_activatedSurface
+                           << "requested" << surface
+                           << "appId" << (surface ? surface->appId() : QString())
+                           << "acceptKeyboardFocus"
+                           << (surface ? surface->acceptKeyboardFocus() : false);
     if (surface && !surface->acceptKeyboardFocus()) {
+        qCWarning(xiaoyaobing) << "SeatSurfaceManager rejected non-focusable activation"
+                               << surface;
         return;
     }
 
-    if (m_activatedSurface == surface)
+    if (m_activatedSurface == surface) {
+        qCWarning(xiaoyaobing) << "SeatSurfaceManager ignored same activated surface"
+                               << surface;
         return;
+    }
 
     if (m_activatedSurface) {
         disconnect(m_activatedSurface,
@@ -110,8 +122,23 @@ void SeatSurfaceManager::onActivatedSurfaceFocusCapabilityChanged()
 
 void SeatSurfaceManager::setKeyboardFocusSurface(SurfaceWrapper *surface, Qt::FocusReason reason)
 {
-    if (m_keyboardFocusSurface == surface)
+    auto *seatHandle = m_seat ? m_seat->handle() : nullptr;
+    qCWarning(xiaoyaobing) << "SeatSurfaceManager::setKeyboardFocusSurface"
+                           << "seat" << m_seat
+                           << "current" << m_keyboardFocusSurface
+                           << "requested" << surface
+                           << "appId" << (surface ? surface->appId() : QString())
+                           << "reason" << static_cast<int>(reason)
+                           << "waylibFocus" << (m_seat ? m_seat->keyboardFocusSurface() : nullptr)
+                           << "wlrFocus"
+                           << (seatHandle ? seatHandle->keyboard_state.focused_surface : nullptr)
+                           << "pointerFocus" << (m_seat ? m_seat->pointerFocusSurface() : nullptr);
+
+    if (m_keyboardFocusSurface == surface) {
+        qCWarning(xiaoyaobing) << "SeatSurfaceManager ignored same keyboard focus surface"
+                               << surface;
         return;
+    }
     Q_ASSERT(m_seat && m_seat->handle());
 
     auto *oldSurface = m_keyboardFocusSurface;

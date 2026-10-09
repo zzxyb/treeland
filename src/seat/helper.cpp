@@ -126,6 +126,7 @@
 #include <QThreadPool>
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <pwd.h>
@@ -135,6 +136,49 @@
 #define EXT_DATA_CONTROL_MANAGER_V1_VERSION 1
 #define WLR_FRACTIONAL_SCALE_V1_VERSION 1
 #define DEFAULT_SEAT_NAME "seat0"
+
+static void logX11InputFocus(SurfaceWrapper *surface)
+{
+    auto *xwaylandSurface =
+        surface ? qobject_cast<WXWaylandSurface *>(surface->shellSurface()) : nullptr;
+    if (!xwaylandSurface)
+        return;
+
+    auto *xwayland = xwaylandSurface->xwayland();
+    auto *connection = xwayland ? xwayland->xcbConnection() : nullptr;
+    if (!connection) {
+        qCWarning(xiaoyaobing) << "X11 input focus query failed: no XCB connection"
+                               << "surface" << surface;
+        return;
+    }
+
+    xcb_generic_error_t *error = nullptr;
+    auto cookie = xcb_get_input_focus(connection);
+    auto *reply = xcb_get_input_focus_reply(connection, cookie, &error);
+
+    const xcb_window_t actualFocus = reply ? reply->focus : XCB_WINDOW_NONE;
+    WXWaylandSurface *actualFocusSurface = nullptr;
+    for (auto *candidate : xwayland->surfaceList()) {
+        if (candidate->handle()->window_id == actualFocus) {
+            actualFocusSurface = candidate;
+            break;
+        }
+    }
+
+    qCWarning(xiaoyaobing) << "X11 input focus state"
+                           << "targetXid" << xwaylandSurface->handle()->window_id
+                           << "actualFocusXid" << actualFocus
+                           << "actualFocusSurface" << actualFocusSurface
+                           << "actualFocusAppId"
+                           << (actualFocusSurface ? actualFocusSurface->appId() : QString())
+                           << "actualFocusTitle"
+                           << (actualFocusSurface ? actualFocusSurface->title() : QString())
+                           << "revertTo" << (reply ? static_cast<int>(reply->revert_to) : -1)
+                           << "errorCode" << (error ? static_cast<int>(error->error_code) : 0);
+
+    std::free(reply);
+    std::free(error);
+}
 
 static bool hasSavedOutputState(OutputConfig *config)
 {
@@ -2488,10 +2532,29 @@ void Helper::activateSurface(SurfaceWrapper *wrapper,
                              WSeat *seat,
                              bool raise)
 {
+    qCWarning(xiaoyaobing) << "activateSurface request"
+                           << "surface" << wrapper
+                           << "appId" << (wrapper ? wrapper->appId() : QString())
+                           << "type" << (wrapper ? static_cast<int>(wrapper->type()) : -1)
+                           << "acceptKeyboardFocus"
+                           << (wrapper ? wrapper->acceptKeyboardFocus() : false)
+                           << "hasFocusCapability"
+                           << (wrapper ? wrapper->hasFocusCapability() : false)
+                           << "isActivated" << (wrapper ? wrapper->isActivated() : false)
+                           << "reason" << static_cast<int>(reason)
+                           << "seat" << seat
+                           << "raise" << raise
+                           << "qtFocusSurface" << keyboardFocusSurface();
+
     if (wrapper && wrapper->isIMCandidatePanel())
         return;
 
     if (wrapper && !wrapper->acceptKeyboardFocus()) {
+        qCWarning(xiaoyaobing) << "activateSurface ignored non-focusable surface"
+                               << "surface" << wrapper
+                               << "appId" << wrapper->appId()
+                               << "isActivated" << wrapper->isActivated()
+                               << "qtFocusSurface" << keyboardFocusSurface();
         if (raise) {
             wrapper->stackToLast();
         }
@@ -2850,6 +2913,18 @@ bool Helper::afterHandleEvent([[maybe_unused]] WSeat *seat,
         auto surface = m_rootSurfaceContainer->getSurface(watched);
         WSeat *eventSeat = getSeatForEvent(event);
 
+        qCWarning(xiaoyaobing) << "pointer begin event"
+                               << "eventType" << static_cast<int>(event->type())
+                               << "watched" << watched
+                               << "surfaceItem" << surfaceItem
+                               << "surface" << surface
+                               << "appId" << (surface ? surface->appId() : QString())
+                               << "acceptKeyboardFocus"
+                               << (surface ? surface->acceptKeyboardFocus() : false)
+                               << "eventSeat" << eventSeat
+                               << "qtFocusSurface" << keyboardFocusSurface();
+        logX11InputFocus(surface);
+
         if (eventSeat && surface) {
             updateSurfaceSeatInteraction(surface, eventSeat);
             activateSurface(surface, Qt::MouseFocusReason, eventSeat);
@@ -3126,8 +3201,20 @@ void Helper::setActivatedSurface(SurfaceWrapper *newActivateSurface, WSeat *seat
         return;
     }
 
-    if (seatContainer->activatedSurface() == newActivateSurface)
+    qCWarning(xiaoyaobing) << "setActivatedSurface"
+                           << "current" << seatContainer->activatedSurface()
+                           << "requested" << newActivateSurface
+                           << "appId"
+                           << (newActivateSurface ? newActivateSurface->appId() : QString())
+                           << "seat" << targetSeat
+                           << "raise" << raise
+                           << "qtFocusSurface" << keyboardFocusSurface();
+
+    if (seatContainer->activatedSurface() == newActivateSurface) {
+        qCWarning(xiaoyaobing) << "setActivatedSurface ignored same surface"
+                               << newActivateSurface;
         return;
+    }
 
     const bool isPrimarySeat = (targetSeat == m_primarySeat);
     auto *oldPrimarySurface = isPrimarySeat ? activatedSurface() : nullptr;
@@ -3179,10 +3266,26 @@ void Helper::setActivatedSurface(SurfaceWrapper *newActivateSurface, WSeat *seat
 
 void Helper::onRenderWindowActiveFocusItemChanged()
 {
-    if (!keyboardFocusSurface()) {
+    auto *activeFocusItem = m_renderWindow->activeFocusItem();
+    auto *qtFocusSurface = keyboardFocusSurface();
+    qCWarning(xiaoyaobing) << "activeFocusItemChanged"
+                           << "activeFocusItem" << activeFocusItem
+                           << "qtFocusSurface" << qtFocusSurface;
+
+    const auto seats = m_seatManager->seats();
+    for (auto *seat : seats) {
+        auto *seatContainer = m_rootSurfaceContainer->getSeatContainer(seat);
+        qCWarning(xiaoyaobing) << "activeFocusItemChanged seat state"
+                               << "seat" << seat
+                               << "activatedSurface"
+                               << (seatContainer ? seatContainer->activatedSurface() : nullptr)
+                               << "keyboardFocusSurface"
+                               << (seatContainer ? seatContainer->keyboardFocusSurface() : nullptr);
+    }
+
+    if (!qtFocusSurface) {
         // Keyboard focus moved to a non-client window (e.g. internal QML component).
         // Notify all seats to clear the keyboard focus surface.
-        const auto seats = m_seatManager->seats();
         for (auto *seat : seats) {
             if (auto *seatContainer = m_rootSurfaceContainer->getSeatContainer(seat)) {
                 if (seatContainer->keyboardFocusSurface())
@@ -3194,6 +3297,13 @@ void Helper::onRenderWindowActiveFocusItemChanged()
 
 void Helper::requestKeyboardFocus(SurfaceWrapper *wrapper, Qt::FocusReason reason, WSeat *seat)
 {
+    qCWarning(xiaoyaobing) << "requestKeyboardFocus request"
+                           << "surface" << wrapper
+                           << "appId" << (wrapper ? wrapper->appId() : QString())
+                           << "reason" << static_cast<int>(reason)
+                           << "seat" << seat
+                           << "qtFocusSurface" << keyboardFocusSurface();
+
     if (wrapper) {
         // Pop up through parent hierarchy until we find a non-popup surface or grabbed popup
         while (wrapper) {
@@ -3218,6 +3328,10 @@ void Helper::requestKeyboardFocus(SurfaceWrapper *wrapper, Qt::FocusReason reaso
     // Qt focus management, Wayland focus, multi-seat arbitration, and interaction metadata.
     auto *seatContainer = m_rootSurfaceContainer->getSeatContainer(seat);
     Q_ASSERT(seatContainer);
+    qCWarning(xiaoyaobing) << "requestKeyboardFocus dispatch"
+                           << "current" << seatContainer->keyboardFocusSurface()
+                           << "requested" << wrapper
+                           << "activated" << seatContainer->activatedSurface();
     seatContainer->setKeyboardFocusSurface(wrapper, reason);
 }
 

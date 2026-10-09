@@ -99,3 +99,5 @@ Q_LOGGING_CATEGORY(lcTlHooks, "treeland.hooks")
 // Debug remote source
 Q_LOGGING_CATEGORY(lcTlDebug, "treeland.debug")
 
+// Temporary focus diagnosis for BUG-377283
+Q_LOGGING_CATEGORY(xiaoyaobing, "xiaoyaobing")
