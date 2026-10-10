@@ -109,6 +109,8 @@ public:
     QByteArrayView interfaceName() const override;
 
 Q_SIGNALS:
+    // Emitted only when the native seat is destroyed outside WServer teardown.
+    void handleDestroyed();
     void keyboardChanged();
     void keyboardFocusSurfaceChanged();
     void requestCursorShape(WAYLIB_SERVER_NAMESPACE::WGlobal::CursorShape shape);
@@ -163,6 +165,10 @@ protected:
     void notifyTouchFrame(WCursor *cursor);
 
     void setCursorShape(wlr_seat_client *client, WGlobal::CursorShape shape);
+
+private:
+    void releaseHandle();
+    void onHandleDestroyed();
 };
 
 WAYLIB_SERVER_END_NAMESPACE

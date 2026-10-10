@@ -9,6 +9,7 @@
 
 #include <QObject>
 #include <QMap>
+#include <QSet>
 #include <QRegularExpression>
 
 QT_BEGIN_NAMESPACE
@@ -39,6 +40,7 @@ public:
 
     // Seat management
     WSeat *createSeat(const QString &name, bool isFallback = false);
+    void createTransientSeat(wlr_transient_seat_v1 *transientSeat);
     void removeSeat(const QString &name);
     void removeSeat(WSeat *seat);
     WSeat *getSeat(const QString &name) const;
@@ -104,6 +106,8 @@ Q_SIGNALS:
 private:
     WServer *m_server = nullptr;
     QMap<QString, WSeat*> m_seats;
+    QSet<QString> m_transientSeats;
+    quint64 m_transientSeatCounter = 0;
     QMap<QString, QList<QRegularExpression>> m_deviceRules;
     WSeat *m_defaultSeat = nullptr;
     mutable QMap<WInputDevice*, WSeat*> m_deviceCache;

@@ -1639,6 +1639,7 @@ void WSeat::create(WServer *server)
     Q_ASSERT(m_handle);
     d->handle()->data = this;
     d->connect();
+    listeners()->add(&d->handle()->events.destroy, this, &WSeat::onHandleDestroyed);
 
     if (!d->group) {
         d->group = wlr_keyboard_group_create();
@@ -1669,6 +1670,20 @@ void WSeat::create(WServer *server)
 
 void WSeat::destroy(WServer *)
 {
+    auto *seat = handle();
+    releaseHandle();
+    wlr_seat_destroy(seat);
+}
+
+void WSeat::onHandleDestroyed()
+{
+    teardown();
+    releaseHandle();
+    Q_EMIT handleDestroyed();
+}
+
+void WSeat::releaseHandle()
+{
     W_D(WSeat);
 
     // Device key/modifiers listeners were owned by this seat and already
@@ -1684,20 +1699,14 @@ void WSeat::destroy(WServer *)
     if (d->cursor)
         setCursor(nullptr);
 
-    // Tear down the keyboard group before destroying the seat. The group
-    // keyboard is the seat's active keyboard; wlr_keyboard_group_destroy()
-    // fires the keyboard destroy signal which makes the seat drop its
-    // reference, so wlr_seat_destroy() below sees no dangling keyboard.
-    // This also lets create() rebuild the group on restart.
+    // Release the keyboard group while the native seat is still alive,
+    // including when wlroots initiated destruction. Rebuild it on restart.
     d->destroyKeyboardGroup();
 
-    // Clear the reverse fromHandle() mapping while the native seat is still
-    // alive, then destroy it explicitly. wlr_seat_destroy() removes the
-    // display_destroy listener, so the later display.reset() won't touch it.
+    // Clear the reverse mapping before the native handle is freed.
     if (d->handle() && d->handle()->data == this)
         d->handle()->data = nullptr;
 
-    wlr_seat_destroy(d->handle());
     m_handle = nullptr;
 }
 

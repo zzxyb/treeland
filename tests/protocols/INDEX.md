@@ -66,7 +66,7 @@ Wayland 线上请求与事件；本文档规定发出请求后，测试必须观
 
 ### 标准 wayland-protocols（1.49）由 Treeland 提供的协议
 
-以下 25 个测试覆盖 Treeland 在运行时通过 wlroots 实际提供的标准 wayland-protocols（wayland-protocols 1.49.0-1）。
+以下 26 个测试覆盖 Treeland 在运行时通过 wlroots 实际提供的标准 wayland-protocols（wayland-protocols 1.49.0-1）。
 xdg-shell 由共享 xdg-toplevel 夹具覆盖（多个 toplevel 测试复用）。input-method-v2 不在 wayland-protocols 包内，故排除。
 
 | 协议 | 覆盖等级 | 主要生产结果 |
@@ -78,6 +78,7 @@ xdg-shell 由共享 xdg-toplevel 夹具覆盖（多个 toplevel 测试复用）�
 | [wayland-ext-idle-notify-v1](wayland-ext-idle-notify-v1/README.md) | E | 跨协议验证：创建 idle inhibitor 后 `idled` 不触发，销毁 inhibitor 后 `idled` 触发，证明生产 `wlr_idle_notifier_v1` inhibited 状态被修改 |
 | [wayland-ext-image-copy-capture-v1](wayland-ext-image-copy-capture-v1/README.md) | P | 绑定两个 manager，并从真实 headless `wl_output` 创建、销毁非空 capture source |
 | [wayland-ext-session-lock-v1](wayland-ext-session-lock-v1/README.md) | E | `lock`→`locked` 后回读真实 `WSessionLock::isLocked()` 为 true |
+| [wayland-ext-transient-seat-v1](wayland-ext-transient-seat-v1/README.md) | E / P | 独立 seat 创建、ready global 绑定、运行时配置、不持久化、资源销毁与断连清理 |
 | [wayland-fractional-scale-v1](wayland-fractional-scale-v1/README.md) | E | 回读真实 `WOutput::scale()`，断言 `preferred_scale` == round(scale×120) |
 | [wayland-idle-inhibit-unstable-v1](wayland-idle-inhibit-unstable-v1/README.md) | E | 回读真实 `wlr_idle_inhibitor_v1` 已关联 mapped `WSurface`，销毁后确认 resource 已移除 |
 | [wayland-keyboard-shortcuts-inhibit-unstable-v1](wayland-keyboard-shortcuts-inhibit-unstable-v1/README.md) | I / P | mapped toplevel 获取 seat focus 后，inhibitor 收到 `active` | `inactive`、真实快捷键分发和失焦 policy |
