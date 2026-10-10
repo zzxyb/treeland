@@ -92,6 +92,9 @@
 #include <wqmlcreator.h>
 #include <wquickcursor.h>
 #include <wrelativepointermanagerv1.h>
+#include <wvirtualpointermanagerv1.h>
+#include <wcursor.h>
+#include <wlr_all.h>
 #include <wremotesubsurfacemanagerv1.h>
 #include <wrenderhelper.h>
 #include <wscoplistener.h>
@@ -872,6 +875,31 @@ void Helper::applyCurrentUserConfig(const QString &userName,
     m_shellHandler->workspace()->reloadFromConfig();
 }
 
+void Helper::handleNewVirtualPointer(wlr_virtual_pointer_v1_new_pointer_event *event)
+{
+    auto *device = new WInputDevice(&event->new_pointer->pointer.base, true);
+    // Keep the wrapper alive until the client's native device is destroyed.
+    // WInputDevice's destructor detaches it from its seat and cursor.
+    device->listeners()->add(&device->handle()->events.destroy, device,
+                            [device](void *) { delete device; });
+    connect(device, &QObject::destroyed, m_seatManager,
+            [manager = m_seatManager, device] { manager->clearDeviceCache(device); });
+
+    auto *seat = WSeat::fromHandle(event->suggested_seat);
+    if (!seat || !m_seatManager->seats().contains(seat))
+        seat = m_primarySeat;
+    if (!seat || !seat->cursor()) {
+        qCWarning(lcTlInput) << "Cannot attach virtual pointer: no seat with a cursor";
+        return;
+    }
+
+    seat->attachInputDevice(device);
+    if (event->suggested_output)
+        wlr_cursor_map_input_to_output(seat->cursor()->handle(), device->handle(),
+                                      event->suggested_output);
+    qCDebug(lcTlInput) << "Attached virtual pointer to seat" << seat->name();
+}
+
 void Helper::init(Treeland::Treeland *treeland)
 {
     m_treeland = treeland;
@@ -893,6 +921,10 @@ void Helper::init(Treeland::Treeland *treeland)
 
     m_backend = m_server->attach<WBackend>();
     m_seatManager = new SeatManager(m_server, this);
+
+    auto *virtualPointerManager = m_server->attach<WVirtualPointerManagerV1>();
+    connect(virtualPointerManager, &WVirtualPointerManagerV1::newVirtualPointer,
+            this, &Helper::handleNewVirtualPointer);
 
     m_ddmInterfaceV1 = m_server->attach<DDMInterfaceV1>();
 

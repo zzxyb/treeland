@@ -205,6 +205,7 @@ set(SOURCES
     protocols/wcursorshapemanagerv1.cpp
     protocols/wpointerconstraintsv1.cpp
     protocols/wrelativepointermanagerv1.cpp
+    protocols/wvirtualpointermanagerv1.cpp
     protocols/woutputmanagerv1.cpp
     protocols/wextforeigntoplevellistv1.cpp
     protocols/wxdgdialogmanagerv1.cpp
@@ -315,6 +316,7 @@ set(HEADERS
     protocols/WPointerConstraintsV1
     protocols/wremotesubsurfacemanagerv1.h
     protocols/wrelativepointermanagerv1.h
+    protocols/wvirtualpointermanagerv1.h
     protocols/WRelativePointerManagerV1
     protocols/woutputmanagerv1.h
     protocols/WOutputManagerV1
