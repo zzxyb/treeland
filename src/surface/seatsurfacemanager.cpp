@@ -38,22 +38,19 @@ SeatSurfaceManager::SeatSurfaceManager(WSeat *seat, RootSurfaceContainer *parent
     Q_ASSERT(parent);
 
     auto *seatHandle = seat->handle();
-    keyboardGrabBeginListener.init(&seatHandle->events.keyboard_grab_begin,
-                                   this,
-                                   &SeatSurfaceManager::onKeyboardGrabBegin);
-    keyboardGrabEndListener.init(&seatHandle->events.keyboard_grab_end,
-                                 this,
-                                 &SeatSurfaceManager::onKeyboardGrabEnd);
+    seat->listeners(&m_seatListenerOwner)->add(&seatHandle->events.keyboard_grab_begin,
+                                             this,
+                                             &SeatSurfaceManager::onKeyboardGrabBegin);
+    seat->listeners(&m_seatListenerOwner)->add(&seatHandle->events.keyboard_grab_end,
+                                             this,
+                                             &SeatSurfaceManager::onKeyboardGrabEnd);
 }
 
 SeatSurfaceManager::~SeatSurfaceManager()
 {
-    // Drop native listeners before ~WScopedListener runs: on seat removal the
-    // seat is detached/deleted before this object's deleteLater, and
-    // wlr_seat_destroy asserts the keyboard_grab listener lists are empty.
-    // (QObject::connect on qw_seat used to auto-disconnect.)
-    keyboardGrabBeginListener.disconnect();
-    keyboardGrabEndListener.disconnect();
+    // The seat also removes this group during native teardown, before a
+    // deferred SeatSurfaceManager deletion can run.
+    m_seatListenerOwner.teardown();
     endMoveResize();
 }
 
@@ -164,7 +161,7 @@ void SeatSurfaceManager::setKeyboardFocusSurface(SurfaceWrapper *surface, Qt::Fo
 
     if (surface) {
         surface->setFocus(true, reason);
-        surface->setProperty("lastInteractingSeat", QVariant::fromValue(m_seat));
+        surface->setProperty("lastInteractingSeat", QVariant::fromValue(m_seat.data()));
         surface->setProperty("lastInteractionTime", QDateTime::currentMSecsSinceEpoch());
     }
 }

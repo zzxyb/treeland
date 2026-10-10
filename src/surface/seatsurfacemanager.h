@@ -7,6 +7,7 @@
 #include <wseat.h>
 #include <wscoplistener.h>
 #include <QQuickItem>
+#include <QPointer>
 #include <QMap>
 
 class QTimer;
@@ -76,7 +77,7 @@ private:
     void onKeyboardGrabBegin();
     void onKeyboardGrabEnd();
 
-    WSeat *m_seat = nullptr;
+    QPointer<WAYLIB_SERVER_NAMESPACE::WSeat> m_seat;
     RootSurfaceContainer *m_rootContainer = nullptr;
 
     // Per-seat state
@@ -95,9 +96,6 @@ private:
     qreal m_clampMinH = 0;
     qreal m_clampMaxH = 0;
     QSizeF applyResizeClamp(const QSizeF &target) const;
-    // Equivalent to the old QObject::connect on qw_seat; disconnect in the
-    // destructor so wlr_seat_destroy does not assert on leftover listeners
-    // when the seat is deleted before this object's deleteLater runs.
-    WAYLIB_SERVER_NAMESPACE::WScopedListener keyboardGrabBeginListener;
-    WAYLIB_SERVER_NAMESPACE::WScopedListener keyboardGrabEndListener;
+    // Removed by either the seat's native teardown or this owner's teardown.
+    WAYLIB_SERVER_NAMESPACE::WListenerOwner m_seatListenerOwner;
 };

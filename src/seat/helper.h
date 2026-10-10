@@ -321,6 +321,7 @@ private Q_SLOTS:
 private:
     void onSurfaceModeChanged(WSurface *surface, WXdgDecorationManager::DecorationMode mode);
     void onNewIdleInhibitor(wlr_idle_inhibitor_v1 *inhibitor);
+    void handleNewVirtualPointer(wlr_virtual_pointer_v1_new_pointer_event *event);
     void onSurfaceWrapperAdded(SurfaceWrapper *wrapper);
     void onSurfaceWrapperAboutToRemove(SurfaceWrapper *wrapper);
     void handleRequestDrag([[maybe_unused]] WSurface *surface);

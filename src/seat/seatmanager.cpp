@@ -30,6 +30,7 @@ SeatManager::~SeatManager()
 {
     QMap<QString, WSeat*> seatsToDelete;
     seatsToDelete.swap(m_seats);
+    m_transientSeats.clear();
     m_deviceRules.clear();
     m_defaultSeat = nullptr;
 
@@ -89,6 +90,42 @@ WSeat *SeatManager::createSeat(const QString &name, bool isFallback)
     return seat;
 }
 
+void SeatManager::createTransientSeat(wlr_transient_seat_v1 *transientSeat)
+{
+    if (!m_server || !m_server->isRunning() || !m_defaultSeat) {
+        wlr_transient_seat_v1_deny(transientSeat);
+        return;
+    }
+
+    QString name;
+    do {
+        name = QStringLiteral("transient-%1").arg(m_transientSeatCounter++);
+    } while (m_seats.contains(name));
+
+    auto *seat = m_server->attach<WSeat>(name);
+    if (!seat->handle()) {
+        m_server->detach(seat);
+        delete seat;
+        wlr_transient_seat_v1_deny(transientSeat);
+        return;
+    }
+
+    auto *cursor = new WCursor(seat);
+    cursor->setParent(seat);
+    if (auto *defaultCursor = m_defaultSeat->cursor())
+        cursor->setLayout(defaultCursor->layout());
+    seat->setCursor(cursor);
+    seat->setKeyboardFocusWindow(m_defaultSeat->keyboardFocusWindow());
+    seat->setEventFilter(m_defaultSeat->eventFilter());
+    m_seats.insert(name, seat);
+    m_transientSeats.insert(name);
+    connect(seat, &WSeat::handleDestroyed, this, [this, seat] {
+        removeSeat(seat);
+    });
+    Q_EMIT seatAdded(seat);
+    wlr_transient_seat_v1_ready(transientSeat, seat->handle());
+}
+
 void SeatManager::removeSeat(const QString &name)
 {
     if (!m_seats.contains(name)) {
@@ -97,6 +134,7 @@ void SeatManager::removeSeat(const QString &name)
     }
 
     WSeat *seat = m_seats.take(name);
+    m_transientSeats.remove(name);
 
     if (m_defaultSeat == seat && !m_seats.isEmpty()) {
         m_defaultSeat = m_seats.begin().value();
@@ -317,6 +355,7 @@ void SeatManager::loadConfig(const QJsonObject &config)
 
     QMap<QString, WSeat*> seatsToDelete;
     seatsToDelete.swap(m_seats);
+    m_transientSeats.clear();
     m_deviceRules.clear();
     m_defaultSeat = nullptr;
 
@@ -506,6 +545,8 @@ QJsonObject SeatManager::saveConfig() const
     for (auto it = m_seats.begin(); it != m_seats.end(); ++it) {
         QString name = it.key();
         WSeat *seat = it.value();
+        if (m_transientSeats.contains(name))
+            continue;
         
         QJsonObject seatObj;
         seatObj["name"] = name;
