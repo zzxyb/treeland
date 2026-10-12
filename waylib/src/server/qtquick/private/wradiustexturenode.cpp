@@ -390,6 +390,8 @@ void RadiusTextureNode::updateGeometry()
 
 void RadiusTextureNode::updateMaterial()
 {
+    m_material.setRect(m_rect);
+    m_material.setSourceRect(effectiveSourceRect());
     const QRectF viewport = m_viewport.isValid() ? m_viewport : m_rect;
     const auto effective = [this](float radius) {
         return radius >= 0.0f ? radius : m_radius;

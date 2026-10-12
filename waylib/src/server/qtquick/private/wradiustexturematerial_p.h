@@ -7,6 +7,7 @@
 
 #include <QSGTextureMaterial>
 #include <QSGTexture>
+#include <QRectF>
 #include <QVector2D>
 #include <QVector4D>
 
@@ -23,6 +24,11 @@ public:
 
     void setTexture(QSGTexture *texture);
 
+    QRectF rect() const;
+    void setRect(const QRectF &rect);
+    QRectF sourceRect() const;
+    void setSourceRect(const QRectF &rect);
+
     QVector4D radii() const;
     void setRadii(const QVector4D &radii);
 
@@ -33,6 +39,8 @@ public:
     void setAntialiasing(bool antialiasing);
 
 private:
+    QRectF m_rect;
+    QRectF m_sourceRect;
     QVector4D m_radii;
     QVector2D m_viewportSize;
     bool m_antialiasing = true;

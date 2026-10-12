@@ -9,10 +9,62 @@
 #include <rhi/qrhi.h>
 
 #include <cstring>
+#include <cmath>
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 namespace {
+constexpr qreal pixelAlignmentTolerance = 0.001;
+
+bool isIntegralPixel(qreal value)
+{
+    return std::abs(value - std::round(value)) <= pixelAlignmentTolerance;
+}
+
+QMatrix4x4 pixelAlignedMatrix(const QMatrix4x4 &matrix, const QRect &viewport,
+                             const QRectF &rect, const QRectF &sourceRect)
+{
+    if (viewport.isEmpty() || !rect.isValid() || !sourceRect.isValid()
+        || matrix(3, 0) != 0.0f || matrix(3, 1) != 0.0f || matrix(3, 3) <= 0.0f) {
+        return matrix;
+    }
+
+    // Fractional source crops intentionally sample between texels.
+    if (!isIntegralPixel(sourceRect.left()) || !isIntegralPixel(sourceRect.top())
+        || !isIntegralPixel(sourceRect.right()) || !isIntegralPixel(sourceRect.bottom())) {
+        return matrix;
+    }
+
+    const qreal w = matrix(3, 3);
+    const qreal halfWidth = viewport.width() * 0.5;
+    const qreal halfHeight = viewport.height() * 0.5;
+    const QPointF xAxis(matrix(0, 0) * halfWidth / w, matrix(1, 0) * halfHeight / w);
+    const QPointF yAxis(matrix(0, 1) * halfWidth / w, matrix(1, 1) * halfHeight / w);
+    const bool axisAligned =
+        (std::abs(xAxis.y() * rect.width()) <= pixelAlignmentTolerance
+         && std::abs(yAxis.x() * rect.height()) <= pixelAlignmentTolerance)
+        || (std::abs(xAxis.x() * rect.width()) <= pixelAlignmentTolerance
+            && std::abs(yAxis.y() * rect.height()) <= pixelAlignmentTolerance);
+    if (!axisAligned
+        || std::abs(std::hypot(xAxis.x(), xAxis.y()) * rect.width() - sourceRect.width())
+            > pixelAlignmentTolerance
+        || std::abs(std::hypot(yAxis.x(), yAxis.y()) * rect.height() - sourceRect.height())
+            > pixelAlignmentTolerance) {
+        return matrix;
+    }
+
+    // Align the rectangle's origin in the physical render-target viewport.
+    // Apply one translation to the whole quad so UVs and the rounded mask
+    // retain their relative positions and the quad is never stretched.
+    const QVector4D origin = matrix * QVector4D(float(rect.x()), float(rect.y()), 0.0f, 1.0f);
+    const qreal pixelX = (origin.x() / w + 1.0) * halfWidth + viewport.x();
+    const qreal pixelY = (origin.y() / w + 1.0) * halfHeight + viewport.y();
+    QMatrix4x4 aligned = matrix;
+    aligned(0, 3) += float((std::round(pixelX) - pixelX) * w / halfWidth);
+    aligned(1, 3) += float((std::round(pixelY) - pixelY) * w / halfHeight);
+    return aligned;
+}
+
 bool isPowerOfTwo(int value)
 {
     return value > 0 && (value & (value - 1)) == 0;
@@ -42,7 +94,8 @@ public:
             float hasAlphaChannel;
         } uniformData;
 
-        const QMatrix4x4 matrix = state.combinedMatrix();
+        const QMatrix4x4 matrix = pixelAlignedMatrix(state.combinedMatrix(), state.viewportRect(),
+                                                    material->rect(), material->sourceRect());
         std::memcpy(uniformData.matrix, matrix.constData(), sizeof(uniformData.matrix));
 
         const QVector4D radii = material->radii();
@@ -105,6 +158,7 @@ RadiusTextureMaterial::RadiusTextureMaterial()
 {
     setFlag(Blending);
     setFlag(NoBatching);
+    setFlag(RequiresFullMatrix);
 }
 
 QSGMaterialType *RadiusTextureMaterial::type() const
@@ -133,6 +187,26 @@ void RadiusTextureMaterial::setTexture(QSGTexture *texture)
     QSGTextureMaterial::setTexture(texture);
     // The rounded mask needs blending even when the source texture is opaque.
     setFlag(Blending);
+}
+
+QRectF RadiusTextureMaterial::rect() const
+{
+    return m_rect;
+}
+
+void RadiusTextureMaterial::setRect(const QRectF &rect)
+{
+    m_rect = rect;
+}
+
+QRectF RadiusTextureMaterial::sourceRect() const
+{
+    return m_sourceRect;
+}
+
+void RadiusTextureMaterial::setSourceRect(const QRectF &rect)
+{
+    m_sourceRect = rect;
 }
 
 QVector4D RadiusTextureMaterial::radii() const
