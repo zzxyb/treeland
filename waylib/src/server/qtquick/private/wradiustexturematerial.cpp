@@ -22,7 +22,7 @@ bool isIntegralPixel(qreal value)
 }
 
 QMatrix4x4 pixelAlignedMatrix(const QMatrix4x4 &matrix, const QRect &viewport,
-                             const QRectF &rect, const QRectF &sourceRect)
+                             const QRectF &rect, const QRectF &sourceRect, qreal devicePixelRatio)
 {
     if (viewport.isEmpty() || !rect.isValid() || !sourceRect.isValid()
         || matrix(3, 0) != 0.0f || matrix(3, 1) != 0.0f || matrix(3, 3) <= 0.0f) {
@@ -45,23 +45,51 @@ QMatrix4x4 pixelAlignedMatrix(const QMatrix4x4 &matrix, const QRect &viewport,
          && std::abs(yAxis.x() * rect.height()) <= pixelAlignmentTolerance)
         || (std::abs(xAxis.x() * rect.width()) <= pixelAlignmentTolerance
             && std::abs(yAxis.y() * rect.height()) <= pixelAlignmentTolerance);
-    if (!axisAligned
-        || std::abs(std::hypot(xAxis.x(), xAxis.y()) * rect.width() - sourceRect.width())
-            > pixelAlignmentTolerance
-        || std::abs(std::hypot(yAxis.x(), yAxis.y()) * rect.height() - sourceRect.height())
-            > pixelAlignmentTolerance) {
+    if (!axisAligned) {
         return matrix;
     }
 
+    const qreal scaleX = std::hypot(xAxis.x(), xAxis.y());
+    const qreal scaleY = std::hypot(yAxis.x(), yAxis.y());
+    const qreal pixelWidth = scaleX * rect.width();
+    const qreal pixelHeight = scaleY * rect.height();
+    const bool oneToOne = std::abs(pixelWidth - sourceRect.width()) <= pixelAlignmentTolerance
+        && std::abs(pixelHeight - sourceRect.height()) <= pixelAlignmentTolerance;
+    if (!oneToOne) {
+        // Fractional-DPR buffers round their dimensions up to whole pixels.
+        // Correct that rounding only at the native output scale, never for
+        // an independently scaled item or an animation transform.
+        const bool nativeScale = std::abs(scaleX - devicePixelRatio) <= 0.00001
+            && std::abs(scaleY - devicePixelRatio) <= 0.00001;
+        const bool roundedBuffer =
+            std::abs(sourceRect.width() - std::ceil(pixelWidth - pixelAlignmentTolerance))
+                <= pixelAlignmentTolerance
+            && std::abs(sourceRect.height() - std::ceil(pixelHeight - pixelAlignmentTolerance))
+                <= pixelAlignmentTolerance;
+        if (!nativeScale || !roundedBuffer || pixelWidth <= 0.0 || pixelHeight <= 0.0)
+            return matrix;
+    }
+
     // Align the rectangle's origin in the physical render-target viewport.
-    // Apply one translation to the whole quad so UVs and the rounded mask
-    // retain their relative positions and the quad is never stretched.
+    // Keep UVs and the rounded mask together. At fractional DPR also match
+    // the buffer's rounded size so text is not resampled across the quad.
     const QVector4D origin = matrix * QVector4D(float(rect.x()), float(rect.y()), 0.0f, 1.0f);
     const qreal pixelX = (origin.x() / w + 1.0) * halfWidth + viewport.x();
     const qreal pixelY = (origin.y() / w + 1.0) * halfHeight + viewport.y();
     QMatrix4x4 aligned = matrix;
-    aligned(0, 3) += float((std::round(pixelX) - pixelX) * w / halfWidth);
-    aligned(1, 3) += float((std::round(pixelY) - pixelY) * w / halfHeight);
+    if (!oneToOne) {
+        const qreal widthRatio = sourceRect.width() / pixelWidth;
+        const qreal heightRatio = sourceRect.height() / pixelHeight;
+        aligned(0, 0) *= float(widthRatio);
+        aligned(1, 0) *= float(widthRatio);
+        aligned(0, 1) *= float(heightRatio);
+        aligned(1, 1) *= float(heightRatio);
+    }
+    const QVector4D alignedOrigin = aligned * QVector4D(float(rect.x()), float(rect.y()), 0.0f, 1.0f);
+    aligned(0, 3) += float((std::round(pixelX) - pixelX) * w / halfWidth
+                           + origin.x() - alignedOrigin.x());
+    aligned(1, 3) += float((std::round(pixelY) - pixelY) * w / halfHeight
+                           + origin.y() - alignedOrigin.y());
     return aligned;
 }
 
@@ -95,7 +123,8 @@ public:
         } uniformData;
 
         const QMatrix4x4 matrix = pixelAlignedMatrix(state.combinedMatrix(), state.viewportRect(),
-                                                    material->rect(), material->sourceRect());
+                                                    material->rect(), material->sourceRect(),
+                                                    state.devicePixelRatio());
         std::memcpy(uniformData.matrix, matrix.constData(), sizeof(uniformData.matrix));
 
         const QVector4D radii = material->radii();

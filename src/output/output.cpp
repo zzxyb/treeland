@@ -694,7 +694,8 @@ void Output::arrangeLayerSurface(SurfaceWrapper *surface)
     }
 
     surface->setSize(surfaceGeo.size());
-    surface->setPosition(surfaceGeo.topLeft());
+    // Centered layer surfaces can land between physical pixels.
+    surface->setPosition(surface->alignToPixelGrid(surfaceGeo.topLeft()));
 }
 
 void Output::arrangeLayerSurfaces()
