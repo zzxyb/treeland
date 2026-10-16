@@ -116,6 +116,14 @@ void SeatSurfaceManager::setKeyboardFocusSurface(SurfaceWrapper *surface, Qt::Fo
 
     auto *oldSurface = m_keyboardFocusSurface;
 
+    qWarning() << "xiaoyaobing Keyboard focus transfer requested"
+                         << "seat =" << m_seat
+                         << "oldSurface =" << oldSurface
+                         << "oldAppId =" << (oldSurface ? oldSurface->appId() : QString())
+                         << "newSurface =" << surface
+                         << "newAppId =" << (surface ? surface->appId() : QString())
+                         << "reason =" << reason;
+
     // Only check priority when transferring focus between two surfaces.
     // Clearing focus to nullptr (e.g. surfaceDestroyed) must always be allowed.
     if (oldSurface && surface) {
@@ -161,6 +169,13 @@ void SeatSurfaceManager::setKeyboardFocusSurface(SurfaceWrapper *surface, Qt::Fo
     // Assign new keyboard focus surface and update interaction metadata
     m_keyboardFocusSurface = surface;
     m_seat->setKeyboardFocusSurface(surface ? surface->surface() : nullptr);
+
+    qWarning() << "xiaoyaobing Keyboard focus transfer applied"
+                         << "seat =" << m_seat
+                         << "surface =" << m_keyboardFocusSurface
+                         << "appId ="
+                         << (m_keyboardFocusSurface ? m_keyboardFocusSurface->appId() : QString())
+                         << "waylandSurface =" << m_seat->keyboardFocusSurface();
 
     if (surface) {
         surface->setFocus(true, reason);

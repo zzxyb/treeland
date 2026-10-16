@@ -26,6 +26,7 @@
 #include <woutputrenderwindow.h>
 #include <wsurfaceitem.h>
 #include <wxdgpopupsurface.h>
+#include <wxwaylandsurface.h>
 
 #include <wlr_all.h>
 
@@ -256,8 +257,40 @@ bool CompositorInputFilter::beforeDisposeEvent(WSeat *seat, QWindow *targetWindo
         }
 
         if (m_shortcutManager->controller()->dispatchKeyEvent(kevent)) {
+            qWarning() << "xiaoyaobing Key event consumed by shortcut"
+                                 << "key =" << kevent->key()
+                                 << "type =" << kevent->type()
+                                 << "focusSurface =" << seat->keyboardFocusSurface();
             return true;
         }
+
+        auto *focusSurface = seat->keyboardFocusSurface();
+        auto *focusWrapper = focusSurface
+            ? m_server->rootContainer()->getSurface(focusSurface)
+            : nullptr;
+        auto *xwaylandSurface = focusWrapper
+            ? qobject_cast<WXWaylandSurface *>(focusWrapper->shellSurface())
+            : nullptr;
+        qWarning() << "xiaoyaobing Key event continues to focused surface"
+                   << "key =" << kevent->key()
+                   << "type =" << kevent->type()
+                   << "nativeScanCode =" << kevent->nativeScanCode()
+                   << "nativeVirtualKey =" << kevent->nativeVirtualKey()
+                   << "timestamp =" << kevent->timestamp()
+                   << "focusSurface =" << focusSurface
+                   << "focusWrapper =" << focusWrapper
+                   << "appId =" << (focusWrapper ? focusWrapper->appId() : QString())
+                   << "x11WindowId =" << Qt::hex
+                   << (xwaylandSurface ? xwaylandSurface->handle()->window_id : 0)
+                   << Qt::dec
+                   << "title =" << (xwaylandSurface ? xwaylandSurface->title() : QString())
+                   << "x11Activated ="
+                   << (xwaylandSurface ? xwaylandSurface->isActivated() : false)
+                   << "parentX11WindowId =" << Qt::hex
+                   << (xwaylandSurface && xwaylandSurface->parentXWaylandSurface()
+                           ? xwaylandSurface->parentXWaylandSurface()->handle()->window_id
+                           : 0)
+                   << Qt::dec;
     }
 
     return false;

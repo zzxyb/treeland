@@ -136,7 +136,6 @@ Q_SIGNALS:
     void associated();
     // Emitted before WXWaylandSurfacePrivate handles notify_dissociate cleanup.
     void aboutToDissociate();
-
     void parentXWaylandSurfaceChanged();
     void childrenChanged();
     void isToplevelChanged();

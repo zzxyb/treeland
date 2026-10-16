@@ -832,6 +832,7 @@ void ShellHandler::onXWaylandSurfaceAdded(WXWaylandSurface *surface)
                              auto raw = surface.data();
                              if (!raw)
                                  return; // surface destroyed before callback
+
                              // If prelaunch wrappers or closed splash appIds exist and resolver is
                              // available, attempt async resolve; if started, remaining logic
                              // handled in callback, then return
@@ -1034,6 +1035,7 @@ void ShellHandler::ensureXwaylandWrapper(WXWaylandSurface *surface, const QStrin
         setupSurfaceActiveWatcher(wrapper);
         registerSurfaceToForeignToplevel(wrapper);
     }
+
     Q_EMIT surfaceWrapperAdded(wrapper);
 }
 
@@ -1256,6 +1258,23 @@ void ShellHandler::setupSurfaceActiveWatcher(SurfaceWrapper *wrapper)
         });
     } else { // Xdgtoplevel or X11 or Splash
         connect(wrapper, &SurfaceWrapper::activationRequested, this, [this, wrapper]() {
+            if (auto *xwaylandSurface = qobject_cast<WXWaylandSurface *>(wrapper->shellSurface())) {
+                const auto *handle = xwaylandSurface->handle();
+                qWarning()
+                    << "xiaoyaobing XWayland activation requested"
+                    << "wrapper =" << wrapper
+                    << "windowId =" << Qt::hex << handle->window_id << Qt::dec
+                    << "appId =" << wrapper->appId()
+                    << "parent =" << wrapper->parentSurface()
+                    << "overrideRedirect =" << xwaylandSurface->isBypassManager()
+                    << "windowTypes =" << xwaylandSurface->windowTypes()
+                    << "inputModel =" << wlr_xwayland_surface_icccm_input_model(handle)
+                    << "wantsFocus ="
+                    << wlr_xwayland_surface_override_redirect_wants_focus(handle)
+                    << "focusCapability =" << wrapper->hasFocusCapability()
+                    << "acceptKeyboardFocus =" << wrapper->acceptKeyboardFocus();
+            }
+
             if (!wrapper->acceptKeyboardFocus())
                 return;
 

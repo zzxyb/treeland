@@ -15,6 +15,7 @@
 
 #include <wlr_all.h>
 
+#include <QDebug>
 #include <QPointer>
 
 #include <unistd.h>
@@ -50,6 +51,11 @@ void WXWaylandSurfacePrivate::init()
     W_Q(WXWaylandSurface);
 
     q->listeners()->add(&m_handle->events.associate, this, [this, q] (void *) {
+        qWarning() << "xiaoyaobing XWayland surface associate"
+                   << "windowId =" << Qt::hex << handle()->window_id << Qt::dec
+                   << "pid =" << handle()->pid
+                   << "title =" << (handle()->title ? handle()->title : "")
+                   << "waylandSurface =" << handle()->surface;
         Q_ASSERT(!WSurface::fromHandle(handle()->surface));
         surface = new WSurface(handle()->surface);
         surface->setAttachedData<WXWaylandSurface>(q);
@@ -57,6 +63,11 @@ void WXWaylandSurfacePrivate::init()
         Q_EMIT q->associated();
     });
     q->listeners()->add(&m_handle->events.dissociate, this, [this, q] (void *) {
+        qWarning() << "xiaoyaobing XWayland surface dissociate"
+                   << "windowId =" << Qt::hex << handle()->window_id << Qt::dec
+                   << "pid =" << handle()->pid
+                   << "title =" << (handle()->title ? handle()->title : "")
+                   << "waylandSurface =" << handle()->surface;
         Q_ASSERT(surface);
         Q_EMIT q->aboutToDissociate();
         delete surface;
@@ -65,6 +76,25 @@ void WXWaylandSurfacePrivate::init()
     });
     q->listeners()->add(&m_handle->events.set_parent, this, &WXWaylandSurfacePrivate::updateParent);
     q->listeners()->add(&m_handle->events.request_activate, q, &WXWaylandSurface::requestActivate);
+    q->listeners()->add(&m_handle->events.focus_in, this, [this](void *) {
+        qWarning() << "xiaoyaobing XWayland focus_in"
+                   << "windowId =" << Qt::hex << handle()->window_id << Qt::dec
+                   << "pid =" << handle()->pid
+                   << "title =" << (handle()->title ? handle()->title : "")
+                   << "overrideRedirect =" << handle()->override_redirect
+                   << "inputModel ="
+                   << (handle()->xwm
+                           ? static_cast<int>(wlr_xwayland_surface_icccm_input_model(handle()))
+                           : -1)
+                   << "waylandSurface =" << handle()->surface;
+    });
+    q->listeners()->add(&m_handle->events.grab_focus, this, [this](void *) {
+        qWarning() << "xiaoyaobing XWayland grab_focus"
+                   << "windowId =" << Qt::hex << handle()->window_id << Qt::dec
+                   << "pid =" << handle()->pid
+                   << "title =" << (handle()->title ? handle()->title : "")
+                   << "waylandSurface =" << handle()->surface;
+    });
     q->listeners()->add(&m_handle->events.request_configure, this,
                      [this, q] (wlr_xwayland_surface_configure_event *event) {
         lastRequestConfigureGeometry = QRect(event->x, event->y, event->width, event->height);
@@ -641,6 +671,14 @@ void WXWaylandSurface::setActivate(bool on)
 
     if (d->activated == on)
         return;
+
+    qWarning() << "xiaoyaobing XWayland setActivate"
+               << "windowId =" << Qt::hex << handle()->window_id << Qt::dec
+               << "pid =" << handle()->pid
+               << "title =" << (handle()->title ? handle()->title : "")
+               << "requested =" << on
+               << "inputModel =" << wlr_xwayland_surface_icccm_input_model(handle())
+               << "waylandSurface =" << handle()->surface;
 
     d->activated = on;
     wlr_xwayland_surface_activate(handle(), on);

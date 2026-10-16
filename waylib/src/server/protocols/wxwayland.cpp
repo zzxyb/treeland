@@ -20,6 +20,7 @@
 #include <wlr/xwayland/xwayland.h>
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QTimer>
 
 #include <array>
@@ -89,15 +90,46 @@ bool xwayland_user_event_handler(wlr_xwayland *xwayland, xcb_generic_event_t *ev
         return false;
 
     const uint8_t response_type = event->response_type & ~0x80;
+    auto *self = WXWayland::fromHandle(xwayland);
+    if (!self)
+        return false;
+
+    if (response_type == XCB_FOCUS_IN || response_type == XCB_FOCUS_OUT) {
+        auto *focusEvent = reinterpret_cast<const xcb_focus_in_event_t *>(event);
+        WXWaylandSurface *surface = nullptr;
+        for (auto *candidate : self->surfaceList()) {
+            if (candidate->handle()->window_id == focusEvent->event) {
+                surface = candidate;
+                break;
+            }
+        }
+
+        const auto *handle = surface ? surface->handle() : nullptr;
+        qWarning() << "xiaoyaobing XCB focus event"
+                   << "type =" << (response_type == XCB_FOCUS_IN ? "FocusIn" : "FocusOut")
+                   << "windowId =" << Qt::hex << focusEvent->event << Qt::dec
+                   << "mode =" << focusEvent->mode
+                   << "detail =" << focusEvent->detail
+                   << "sequence =" << focusEvent->sequence
+                   << "tracked =" << (surface != nullptr)
+                   << "pid =" << (handle ? handle->pid : 0)
+                   << "title =" << (handle && handle->title ? handle->title : "")
+                   << "overrideRedirect =" << (handle && handle->override_redirect)
+                   << "withdrawn =" << (handle && handle->withdrawn)
+                   << "waylandSurface =" << (handle ? handle->surface : nullptr)
+                   << "waylandMapped ="
+                   << (handle && handle->surface && handle->surface->mapped)
+                   << "parentX11WindowId =" << Qt::hex
+                   << (handle && handle->parent ? handle->parent->window_id : 0) << Qt::dec
+                   << "seatFocusedSurface ="
+                   << (self->seat() ? self->seat()->keyboardFocusSurface() : nullptr);
+        return false;
+    }
+
     if (response_type != XCB_PROPERTY_NOTIFY)
         return false;
 
     auto *pe = reinterpret_cast<const xcb_property_notify_event_t *>(event);
-    auto *self = WXWayland::fromHandle(xwayland);
-
-    if (!self)
-        return false;
-
     auto *d = self->d_func();
 
     // Trigger async property reading infrastructure if this window is being tracked.
@@ -193,6 +225,17 @@ void WXWaylandPrivate::on_new_surface(wlr_xwayland_surface *xwl_surface)
 void WXWaylandPrivate::on_surface_destroy(WXWaylandSurface *surface)
 {
     W_Q(WXWayland);
+
+    const auto *handle = surface->handle();
+    qWarning() << "xiaoyaobing XWayland surface destroy"
+               << "windowId =" << Qt::hex << handle->window_id << Qt::dec
+               << "pid =" << handle->pid
+               << "title =" << (handle->title ? handle->title : "")
+               << "overrideRedirect =" << handle->override_redirect
+               << "withdrawn =" << handle->withdrawn
+               << "waylandSurface =" << handle->surface
+               << "parentX11WindowId =" << Qt::hex
+               << (handle->parent ? handle->parent->window_id : 0) << Qt::dec;
 
     // wlroots destroys the native parent surface after emitting its destroy
     // signal: it then clears the parent of each child and emits set_parent,

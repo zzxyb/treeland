@@ -236,7 +236,15 @@ public:
             // Send keyboard enter with current modifiers.
             // This ensures the newly focused client receives the current modifier state
             // (Num Lock, Caps Lock, etc.) as required by Wayland protocol.
+            qWarning() << "xiaoyaobing WSeat keyboard enter before"
+                       << "requestedSurface =" << surface
+                       << "rawFocusedSurface =" << keyboardFocusSurface()
+                       << "trackedSurface =" << m_keyboardFocusSurface;
             wlr_seat_keyboard_notify_enter(handle(), surface, keycodes, numKeycodes, modifiers);
+            qWarning() << "xiaoyaobing WSeat keyboard enter after"
+                       << "requestedSurface =" << surface
+                       << "rawFocusedSurface =" << keyboardFocusSurface()
+                       << "trackedSurface =" << m_keyboardFocusSurface;
         } else {
             // Grab-aware: the raw wlr_seat_keyboard_clear_focus() would
             // bypass an active keyboard grab (IME, popup, drag).
@@ -317,6 +325,14 @@ public:
 
         if (!keyboardFocusSurface())
             return false;
+
+        qWarning() << "xiaoyaobing WSeat notify key"
+                   << "keycode =" << keycode
+                   << "state =" << state
+                   << "timestamp =" << timestamp
+                   << "rawFocusedSurface =" << keyboardFocusSurface()
+                   << "trackedSurface =" << m_keyboardFocusSurface
+                   << "keyboard =" << q_func()->keyboard();
 
         /* Send keys to the client. */
         wlr_seat_keyboard_notify_key(handle(), timestamp, keycode, state);
