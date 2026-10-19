@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #pragma once
-
-#include "wradiustexturematerial_p.h"
+#include <wglobal.h>
 
 #include <QObject>
 #include <QPointer>
-#include <QSGGeometryNode>
+#include <QSGGeometry>
+#include <QSGSimpleTextureNode>
 #include <QSGImageNode>
 #include <QSGTextureProvider>
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
-class WAYLIB_SERVER_EXPORT RadiusTextureNode : public QObject, public QSGGeometryNode
+class WAYLIB_SERVER_EXPORT RadiusTextureNode : public QObject, public QSGClipNode
 {
     Q_OBJECT
 
@@ -59,12 +59,11 @@ private:
     void setTextureInternal(QSGTexture *texture);
     QRectF effectiveSourceRect() const;
     void updateGeometry();
-    void updateMaterial();
 
     QPointer<QSGTextureProvider> m_provider;
     QSGTexture *m_texture = nullptr;
     QSGGeometry m_geometry;
-    RadiusTextureMaterial m_material;
+    QSGSimpleTextureNode *m_textureNode;
     QRectF m_rect;
     QRectF m_viewport;
     QPointF m_sourceOffset;
@@ -78,6 +77,8 @@ private:
     float m_topRightRadius = -1.0f;
     float m_bottomLeftRadius = -1.0f;
     float m_bottomRightRadius = -1.0f;
+    QSGTexture::Filtering m_mipmapFiltering = QSGTexture::None;
+    QSGTexture::AnisotropyLevel m_anisotropyLevel = QSGTexture::AnisotropyNone;
     bool m_antialiasing = true;
     bool m_ownsTexture = false;
     bool m_geometryDirty = true;

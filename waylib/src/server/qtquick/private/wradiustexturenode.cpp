@@ -5,35 +5,11 @@
 
 #include <QSGDynamicTexture>
 #include <QSGTexture>
+#include <QtMath>
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 
 namespace {
-struct RadiusTextureVertex {
-    float x;
-    float y;
-    float textureX;
-    float textureY;
-    float localX;
-    float localY;
-};
-
-const QSGGeometry::AttributeSet &radiusTextureAttributes()
-{
-    static const QSGGeometry::Attribute attributes[] = {
-        QSGGeometry::Attribute::createWithAttributeType(
-            0, 2, QSGGeometry::FloatType, QSGGeometry::PositionAttribute),
-        QSGGeometry::Attribute::createWithAttributeType(
-            1, 2, QSGGeometry::FloatType, QSGGeometry::TexCoordAttribute),
-        QSGGeometry::Attribute::createWithAttributeType(
-            2, 2, QSGGeometry::FloatType, QSGGeometry::TexCoord1Attribute)
-    };
-    static const QSGGeometry::AttributeSet attributeSet = {
-        3, sizeof(RadiusTextureVertex), attributes
-    };
-    return attributeSet;
-}
-
 struct CornerRadii {
     qreal topLeft;
     qreal topRight;
@@ -43,8 +19,6 @@ struct CornerRadii {
 
 CornerRadii normalizedRadii(const QSizeF &size, CornerRadii radii)
 {
-    // The shader selects a corner by quadrant, so each arc must stay
-    // within its own half of both axes.
     const qreal maximumRadius = qMax<qreal>(0.0, qMin(size.width(), size.height()) * 0.5);
     return { qBound<qreal>(0.0, radii.topLeft, maximumRadius),
              qBound<qreal>(0.0, radii.topRight, maximumRadius),
@@ -54,18 +28,19 @@ CornerRadii normalizedRadii(const QSizeF &size, CornerRadii radii)
 }
 
 RadiusTextureNode::RadiusTextureNode()
-    : m_geometry(radiusTextureAttributes(), 0)
+    : m_geometry(QSGGeometry::defaultAttributes_Point2D(), 0)
+    , m_textureNode(new QSGSimpleTextureNode)
 {
     setFlag(UsePreprocess, true);
-    m_geometry.setDrawingMode(QSGGeometry::DrawTriangleStrip);
+    setIsRectangular(false);
+    m_geometry.setDrawingMode(QSGGeometry::DrawTriangleFan);
     m_geometry.setVertexDataPattern(QSGGeometry::DynamicPattern);
     setGeometry(&m_geometry);
-    setMaterial(&m_material);
+    appendChildNode(m_textureNode);
 }
 
 RadiusTextureNode::~RadiusTextureNode()
 {
-    m_material.setTexture(nullptr);
     if (m_ownsTexture)
         delete m_texture;
 }
@@ -86,21 +61,26 @@ void RadiusTextureNode::setTextureInternal(QSGTexture *texture)
         // A provider may reuse the wrapper while replacing its native texture.
         if (!texture && m_geometry.vertexCount() != 0)
             m_geometry.allocate(0);
+        if (texture)
+            m_textureNode->setTexture(texture);
         m_geometryDirty = true;
-        markDirty(DirtyGeometry | DirtyMaterial);
+        markDirty(DirtyGeometry);
         return;
     }
 
     if (m_ownsTexture)
         delete m_texture;
     m_texture = texture;
-    m_material.setTexture(texture);
+    if (texture)
+        m_textureNode->setTexture(texture);
+    else
+        m_textureNode->setRect({});
     m_textureSize = {};
     m_geometryDirty = true;
 
     if (!m_texture && m_geometry.vertexCount() != 0)
         m_geometry.allocate(0);
-    markDirty(DirtyGeometry | DirtyMaterial);
+    markDirty(DirtyGeometry);
 }
 
 QSGTexture *RadiusTextureNode::texture() const
@@ -120,41 +100,34 @@ bool RadiusTextureNode::ownsTexture() const
 
 void RadiusTextureNode::setFiltering(QSGTexture::Filtering filtering)
 {
-    if (m_material.filtering() == filtering)
+    if (m_textureNode->filtering() == filtering)
         return;
-    m_material.setFiltering(filtering);
-    markDirty(DirtyMaterial);
+    m_textureNode->setFiltering(filtering);
 }
 
 QSGTexture::Filtering RadiusTextureNode::filtering() const
 {
-    return m_material.filtering();
+    return m_textureNode->filtering();
 }
 
 void RadiusTextureNode::setMipmapFiltering(QSGTexture::Filtering filtering)
 {
-    if (m_material.mipmapFiltering() == filtering)
-        return;
-    m_material.setMipmapFiltering(filtering);
-    markDirty(DirtyMaterial);
+    m_mipmapFiltering = filtering;
 }
 
 QSGTexture::Filtering RadiusTextureNode::mipmapFiltering() const
 {
-    return m_material.mipmapFiltering();
+    return m_mipmapFiltering;
 }
 
 void RadiusTextureNode::setAnisotropyLevel(QSGTexture::AnisotropyLevel level)
 {
-    if (m_material.anisotropyLevel() == level)
-        return;
-    m_material.setAnisotropyLevel(level);
-    markDirty(DirtyMaterial);
+    m_anisotropyLevel = level;
 }
 
 QSGTexture::AnisotropyLevel RadiusTextureNode::anisotropyLevel() const
 {
-    return m_material.anisotropyLevel();
+    return m_anisotropyLevel;
 }
 
 void RadiusTextureNode::setTextureCoordinatesTransform(TextureCoordinatesTransformMode mode)
@@ -208,7 +181,7 @@ void RadiusTextureNode::setViewport(const QRectF &viewport)
         return;
     m_viewport = viewport;
     m_geometryDirty = true;
-    markDirty(DirtyGeometry | DirtyMaterial);
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setSourceRect(const QRectF &rect)
@@ -234,7 +207,8 @@ void RadiusTextureNode::setRadius(qreal radius)
     if (m_radius == radius)
         return;
     m_radius = radius;
-    markDirty(DirtyMaterial);
+    m_geometryDirty = true;
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setTopLeftRadius(qreal radius)
@@ -242,7 +216,8 @@ void RadiusTextureNode::setTopLeftRadius(qreal radius)
     if (m_topLeftRadius == radius)
         return;
     m_topLeftRadius = radius;
-    markDirty(DirtyMaterial);
+    m_geometryDirty = true;
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setTopRightRadius(qreal radius)
@@ -250,7 +225,8 @@ void RadiusTextureNode::setTopRightRadius(qreal radius)
     if (m_topRightRadius == radius)
         return;
     m_topRightRadius = radius;
-    markDirty(DirtyMaterial);
+    m_geometryDirty = true;
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setBottomLeftRadius(qreal radius)
@@ -258,7 +234,8 @@ void RadiusTextureNode::setBottomLeftRadius(qreal radius)
     if (m_bottomLeftRadius == radius)
         return;
     m_bottomLeftRadius = radius;
-    markDirty(DirtyMaterial);
+    m_geometryDirty = true;
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setBottomRightRadius(qreal radius)
@@ -266,7 +243,8 @@ void RadiusTextureNode::setBottomRightRadius(qreal radius)
     if (m_bottomRightRadius == radius)
         return;
     m_bottomRightRadius = radius;
-    markDirty(DirtyMaterial);
+    m_geometryDirty = true;
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setAntialiasing(bool antialiasing)
@@ -274,7 +252,8 @@ void RadiusTextureNode::setAntialiasing(bool antialiasing)
     if (m_antialiasing == antialiasing)
         return;
     m_antialiasing = antialiasing;
-    markDirty(DirtyMaterial);
+    m_geometryDirty = true;
+    markDirty(DirtyGeometry);
 }
 
 void RadiusTextureNode::setSourceSizeScale(qreal widthScale, qreal heightScale)
@@ -303,7 +282,7 @@ void RadiusTextureNode::preprocess()
 
     if (auto *dynamicTexture = qobject_cast<QSGDynamicTexture *>(m_texture)) {
         if (dynamicTexture->updateTexture())
-            markDirty(DirtyMaterial);
+            m_textureNode->markDirty(DirtyMaterial);
     }
 
     if (m_textureSize != m_texture->textureSize()) {
@@ -311,13 +290,8 @@ void RadiusTextureNode::preprocess()
         m_geometryDirty = true;
     }
 
-    if (m_geometry.vertexCount() != 4) {
-        m_geometry.allocate(4);
-        m_geometryDirty = true;
-    }
     if (m_geometryDirty)
         updateGeometry();
-    updateMaterial();
 }
 
 void RadiusTextureNode::handleTextureChanged()
@@ -330,9 +304,10 @@ void RadiusTextureNode::handleTextureChanged()
 
     // WSGTextureProvider reuses its QSGTexture wrapper while replacing the
     // underlying QRhiTexture, so a stable pointer still requires rebinding.
+    m_textureNode->setTexture(providerTexture);
     m_textureSize = {};
     m_geometryDirty = true;
-    markDirty(DirtyGeometry | DirtyMaterial);
+    markDirty(DirtyGeometry);
 }
 
 QRectF RadiusTextureNode::effectiveSourceRect() const
@@ -353,54 +328,45 @@ void RadiusTextureNode::updateGeometry()
         return;
 
     const QRectF viewport = m_viewport.isValid() ? m_viewport : m_rect;
-    QRectF sourceRect = effectiveSourceRect();
-    if (m_texCoordMode.testFlag(QSGImageNode::MirrorHorizontally)) {
-        const qreal left = sourceRect.left();
-        sourceRect.setLeft(sourceRect.right());
-        sourceRect.setRight(left);
-    }
-    if (m_texCoordMode.testFlag(QSGImageNode::MirrorVertically)) {
-        const qreal top = sourceRect.top();
-        sourceRect.setTop(sourceRect.bottom());
-        sourceRect.setBottom(top);
-    }
-    const QRectF uv = m_texture->convertToNormalizedSourceRect(sourceRect);
-    auto *vertices = static_cast<RadiusTextureVertex *>(m_geometry.vertexData());
-    vertices[0] = { float(m_rect.left()), float(m_rect.top()),
-                    float(uv.left()), float(uv.top()),
-                    float(m_rect.left() - viewport.left()),
-                    float(m_rect.top() - viewport.top()) };
-    vertices[1] = { float(m_rect.left()), float(m_rect.bottom()),
-                    float(uv.left()), float(uv.bottom()),
-                    float(m_rect.left() - viewport.left()),
-                    float(m_rect.bottom() - viewport.top()) };
-    vertices[2] = { float(m_rect.right()), float(m_rect.top()),
-                    float(uv.right()), float(uv.top()),
-                    float(m_rect.right() - viewport.left()),
-                    float(m_rect.top() - viewport.top()) };
-    vertices[3] = { float(m_rect.right()), float(m_rect.bottom()),
-                    float(uv.right()), float(uv.bottom()),
-                    float(m_rect.right() - viewport.left()),
-                    float(m_rect.bottom() - viewport.top()) };
-
-    m_geometry.markVertexDataDirty();
-    m_geometryDirty = false;
-    markDirty(DirtyGeometry);
-}
-
-void RadiusTextureNode::updateMaterial()
-{
-    const QRectF viewport = m_viewport.isValid() ? m_viewport : m_rect;
     const auto effective = [this](float radius) {
         return radius >= 0.0f ? radius : m_radius;
     };
     CornerRadii radii { effective(m_topLeftRadius), effective(m_topRightRadius),
                         effective(m_bottomRightRadius), effective(m_bottomLeftRadius) };
     radii = normalizedRadii(viewport.size(), radii);
-    m_material.setRadii(QVector4D(float(radii.topLeft), float(radii.topRight),
-                                  float(radii.bottomRight), float(radii.bottomLeft)));
-    m_material.setViewportSize(QVector2D(float(viewport.width()), float(viewport.height())));
-    m_material.setAntialiasing(m_antialiasing);
+
+    constexpr int segmentsPerCorner = 12;
+    constexpr int perimeterVertexCount = 4 * (segmentsPerCorner + 1);
+    m_geometry.allocate(1 + perimeterVertexCount + 1);
+    auto *vertices = m_geometry.vertexDataAsPoint2D();
+    int index = 0;
+    vertices[index++].set(float(viewport.center().x()), float(viewport.center().y()));
+
+    const auto appendCorner = [&](const QPointF &center, qreal radius, qreal startAngle) {
+        for (int segment = 0; segment <= segmentsPerCorner; ++segment) {
+            const qreal angle = startAngle + M_PI_2 * segment / segmentsPerCorner;
+            vertices[index++].set(float(center.x() + std::cos(angle) * radius),
+                                  float(center.y() + std::sin(angle) * radius));
+        }
+    };
+    appendCorner({ viewport.left() + radii.topLeft, viewport.top() + radii.topLeft },
+                 radii.topLeft, M_PI);
+    appendCorner({ viewport.right() - radii.topRight, viewport.top() + radii.topRight },
+                 radii.topRight, M_PI + M_PI_2);
+    appendCorner({ viewport.right() - radii.bottomRight, viewport.bottom() - radii.bottomRight },
+                 radii.bottomRight, 0.0);
+    appendCorner({ viewport.left() + radii.bottomLeft, viewport.bottom() - radii.bottomLeft },
+                 radii.bottomLeft, M_PI_2);
+    vertices[index] = vertices[1];
+
+    m_textureNode->setRect(m_rect);
+    m_textureNode->setSourceRect(effectiveSourceRect());
+    m_textureNode->setTextureCoordinatesTransform(
+        QSGSimpleTextureNode::TextureCoordinatesTransformMode(m_texCoordMode.toInt()));
+    setClipRect(viewport);
+    m_geometry.markVertexDataDirty();
+    m_geometryDirty = false;
+    markDirty(DirtyGeometry);
 }
 
 WAYLIB_SERVER_END_NAMESPACE
