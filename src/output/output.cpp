@@ -3,6 +3,7 @@
 
 #include <wscopedvalue.h>
 #include "output.h"
+#include "gammabrightness.h"
 
 #include "cmdline.h"
 #include "common/treelandlogging.h"
@@ -29,9 +30,12 @@
 #include <wxdgpopupsurface.h>
 #include <wxdgpopupsurfaceitem.h>
 
+#include <QPointer>
 #include <QQmlEngine>
+#include <QTimer>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 
 #define SAME_APP_OFFSET_FACTOR 1.0
@@ -162,7 +166,6 @@ Output::Output(WOutputItem *output, QObject *parent)
     : SurfaceListModel(parent)
     , m_item(output)
     , minimizedSurfaces(new SurfaceFilterModel(this))
-    , m_backlight(Backlight::createForOutput(output->output()))
 {
     m_outputViewport = output->property("screenViewport").value<WOutputViewport *>();
 
@@ -174,6 +177,8 @@ Output::Output(WOutputItem *output, QObject *parent)
 
 Output::~Output()
 {
+    m_colorTemperatureController.reset();
+    m_brightnessController.reset();
     // Mirror outputs reuse the source output's hardware layers. Detach them
     // explicitly before destroying the viewport so that the output gets a new
     // frame and stale hardware-plane contents (notably the cursor) are cleared.
@@ -1123,139 +1128,135 @@ void Output::applyOutputColorConfig()
     }
 }
 
-namespace {
-static inline void kelvinToRGB(double kelvin, double &r, double &g, double &b)
-{
-    kelvin = std::clamp(kelvin, 1000.0, 20000.0) / 100.0;
-
-    if (kelvin <= 66.0) r = 1.0;
-    else r = std::clamp(329.698727446 * std::pow(kelvin - 60.0, -0.1332047592) / 255.0, 0.0, 1.0);
-
-    if (kelvin <= 66.0)
-        g = std::clamp((99.4708025861 * std::log(kelvin) - 161.1195681661) / 255.0, 0.0, 1.0);
-    else
-        g = std::clamp(288.1221695283 * std::pow(kelvin - 60.0, -0.0755148492) / 255.0, 0.0, 1.0);
-
-    if (kelvin >= 66.0) b = 1.0;
-    else if (kelvin <= 19.0) b = 0.0;
-    else b = std::clamp((138.5177312231 * std::log(kelvin - 10.0) - 305.0447927307) / 255.0, 0.0, 1.0);
-}
-
-static inline void generateGammaLUT(uint32_t colorTemperature,
-                                    qreal brightness,
-                                    size_t gammaSize,
-                                    QVector<uint16_t> &r,
-                                    QVector<uint16_t> &g,
-                                    QVector<uint16_t> &b)
-{
-    if (gammaSize == 0) {
-        return;
-    }
-
-    double cr, cg, cb;
-    kelvinToRGB(static_cast<double>(colorTemperature), cr, cg, cb);
-    for (size_t i = 0; i < gammaSize; ++i) {
-        double normalized = static_cast<double>(i) / static_cast<double>(gammaSize - 1);
-
-        double rValue = std::clamp(normalized * cr * brightness, 0.0, 1.0);
-        double gValue = std::clamp(normalized * cg * brightness, 0.0, 1.0);
-        double bValue = std::clamp(normalized * cb * brightness, 0.0, 1.0);
-        r[i] = static_cast<uint16_t>(std::round(rValue * 65535.0));
-        g[i] = static_cast<uint16_t>(std::round(gValue * 65535.0));
-        b[i] = static_cast<uint16_t>(std::round(bValue * 65535.0));
-    }
-}
-
-}
-
-// TODO: better Chromatic Adaptation algorithms can be implemented when the wlr_color_transform
-// api is available. For now RGB scaling is used due to limitation of gamma LUT table.
-// see: http://www.brucelindbloom.com/index.html?ChromAdaptEval.html
 void Output::setOutputColor(qreal brightness,
                             uint32_t colorTemperature,
                             std::function<void(bool)> resultCallback)
 {
-    const bool brightnessRequested = brightness >= 0;
-    const bool colorTemperatureRequested = colorTemperature != 0;
-
-    if (!brightnessRequested)
-        brightness = config()->brightness();
-    if (!colorTemperatureRequested)
-        colorTemperature = config()->colorTemperature();
-
-    brightness = qBound(0.0, brightness, 1.0);
-    colorTemperature = std::clamp(colorTemperature, 1000u, 20000u);
-
-    qreal brightnessCorrection = 1.0;
-    bool backlightApplied = false;
-
-    if (m_backlight) {
-        qreal backlightBrightness = m_backlight->setBrightness(brightness);
-        backlightApplied = qFuzzyCompare(backlightBrightness, brightness);
-        if (backlightBrightness != 0)
-            brightnessCorrection = qBound(0.0, brightness / backlightBrightness, 1.0);
-    } else {
-        brightnessCorrection = brightness;
-    }
-
-    const size_t gammaSize = wlr_output_get_gamma_size(output()->handle());
-    if (gammaSize == 0) {
-        if (backlightApplied) {
-            config()->setBrightness(brightness);
-        }
-        if (resultCallback)
-            resultCallback(backlightApplied && !colorTemperatureRequested);
-        qCWarning(lcTlOutput) << " Output " << output()->name()
-                             << " does not support gamma LUT! Brightness and color temperature adjustments through gamma will have no effect.";
-        return;
-    }
-
-    QVector<uint16_t> r(gammaSize);
-    QVector<uint16_t> g(gammaSize);
-    QVector<uint16_t> b(gammaSize);
-
-    generateGammaLUT(colorTemperature,
-                     brightnessCorrection,
-                     gammaSize,
-                     r,
-                     g,
-                     b);
-
-    WOutputHelper::ExtraState newState;
-    auto *viewport = screenViewport();
-    auto *renderWindow = screenViewport()->outputRenderWindow();
-    auto *tr = wlr_color_transform_init_lut_3x1d(gammaSize,
-                                                   r.constData(),
-                                                   g.constData(),
-                                                   b.constData());
-    if (!tr) {
-        qCWarning(lcTlOutput) << "Failed to create color transform for lut_3x1d on output" << output()->name();
+    if (!std::isfinite(brightness)) {
         if (resultCallback)
             resultCallback(false);
         return;
     }
-    wlr_output_state_set_color_transform(newState.get(), tr);
-    wlr_color_transform_unref(tr);
+    const bool temperatureRequested = colorTemperature != 0;
+    if (brightness < 0)
+        brightness = m_outputColorRequests.empty() ? config()->brightness()
+                                                 : m_outputColorRequests.back().brightness;
+    if (colorTemperature == 0)
+        colorTemperature = m_outputColorRequests.empty() ? config()->colorTemperature()
+                                                        : m_outputColorRequests.back().colorTemperature;
+    // Preserve the active operation and only the newest pending target.
+    // Protocol callers whose request was superseded still receive a reply.
+    std::optional<OutputColorRequest> superseded;
+    if (m_outputColorRequests.size() > 1) {
+        superseded = std::move(m_outputColorRequests.back());
+        m_outputColorRequests.pop_back();
+    }
+    m_outputColorRequests.push_back({qBound(0.0, brightness, 1.0),
+                                     qBound(1000u, colorTemperature, 20000u),
+                                     temperatureRequested, std::move(resultCallback)});
+    const QPointer<Output> guard(this);
+    if (superseded && superseded->callback)
+        superseded->callback(false);
+    if (guard && !m_processingOutputColor) {
+        m_processingOutputColor = true;
+        QTimer::singleShot(0, this, &Output::processOutputColorRequest);
+    }
+}
 
-    auto *outputHelper = renderWindow->getOutputHelper(viewport);
-    outputHelper->setExtraState(newState);
-
-    outputHelper->scheduleCommitJob([this, brightness, colorTemperature, newState, resultCallback](bool success, WOutputHelper::ExtraState state) {
-        if (state == newState) {
-            if (resultCallback)
-                resultCallback(success);
-            if (!success) {
-                qCWarning(lcTlOutput) << "Failed to apply brightness and color temperature settings to output"
-                                          << output()->name();
-            } else {
-                config()->setBrightness(brightness);
-                config()->setColorTemperature(colorTemperature);
-            }
-        } else {
-            qCWarning(lcTlOutput) << "Commit callback received unexpected state pointer!"
-                                      << "Expected:" << newState.get()
-                                      << "Got:" << state.get();
+void Output::processOutputColorRequest()
+{
+    if (m_outputColorRequests.empty()) {
+        m_processingOutputColor = false;
+        return;
+    }
+    if (!m_brightnessController) {
+        m_brightnessController = DisplayBrightness::createForOutput(this);
+        if (!m_brightnessController) {
+            finishOutputColorRequest(false);
+            return;
         }
-    }, WOutputHelper::AfterCommitStage);
-    renderWindow->update(viewport);
+        connect(m_brightnessController.get(), &DisplayBrightness::brightnessChanged,
+                this, &Output::onBrightnessChanged);
+        connect(m_brightnessController.get(), &DisplayBrightness::brightnessChangeFailed,
+                this, &Output::onOutputColorFailed);
+        if (auto *gamma = qobject_cast<GammaBrightness *>(m_brightnessController.get()))
+            connect(gamma, &GammaBrightness::colorTemperatureChanged,
+                    this, &Output::onColorTemperatureChanged);
+    }
+    const qreal brightness = m_outputColorRequests.front().brightness;
+    if (qFuzzyCompare(m_brightnessController->brightness(), brightness)) {
+        applyColorTemperature();
+        return;
+    }
+    m_applyingBrightness = true;
+    m_brightnessController->setBrightness(brightness);
+}
+
+void Output::onBrightnessChanged()
+{
+    config()->setBrightness(m_brightnessController->brightness());
+    if (!m_applyingBrightness)
+        return;
+    m_applyingBrightness = false;
+    applyColorTemperature();
+}
+
+void Output::applyColorTemperature()
+{
+    auto *gamma = qobject_cast<GammaBrightness *>(m_brightnessController.get());
+    if (!gamma) {
+        if (!GammaBrightness::isSupported(this)) {
+            finishOutputColorRequest(!m_outputColorRequests.front().colorTemperatureRequested);
+            return;
+        }
+        if (!m_colorTemperatureController) {
+            m_colorTemperatureController = std::make_unique<GammaBrightness>(this);
+            connect(m_colorTemperatureController.get(), &GammaBrightness::colorTemperatureChanged,
+                    this, &Output::onColorTemperatureChanged);
+            connect(m_colorTemperatureController.get(), &DisplayBrightness::brightnessChangeFailed,
+                    this, &Output::onOutputColorFailed);
+        }
+        gamma = m_colorTemperatureController.get();
+    }
+    const uint temperature = m_outputColorRequests.front().colorTemperature;
+    if (gamma->colorTemperature() == temperature) {
+        finishOutputColorRequest(true);
+        return;
+    }
+    m_applyingColorTemperature = true;
+    gamma->setColorTemperature(temperature);
+}
+
+void Output::onColorTemperatureChanged()
+{
+    auto *gamma = m_colorTemperatureController ? m_colorTemperatureController.get()
+        : qobject_cast<GammaBrightness *>(m_brightnessController.get());
+    if (gamma)
+        config()->setColorTemperature(gamma->colorTemperature());
+    if (m_applyingColorTemperature)
+        finishOutputColorRequest(true);
+}
+
+void Output::onOutputColorFailed()
+{
+    if (m_applyingBrightness || m_applyingColorTemperature)
+        finishOutputColorRequest(false);
+}
+
+void Output::finishOutputColorRequest(bool success)
+{
+    m_applyingBrightness = false;
+    m_applyingColorTemperature = false;
+    auto request = std::move(m_outputColorRequests.front());
+    m_outputColorRequests.pop_front();
+    if (success) {
+        config()->setBrightness(request.brightness);
+        if (GammaBrightness::isSupported(this))
+            config()->setColorTemperature(request.colorTemperature);
+    }
+    const QPointer<Output> guard(this);
+    if (request.callback)
+        request.callback(success);
+    if (guard)
+        QTimer::singleShot(0, this, &Output::processOutputColorRequest);
 }

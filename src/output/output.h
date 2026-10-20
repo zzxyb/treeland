@@ -3,7 +3,9 @@
 #pragma once
 
 #include "surface/surfacecontainer.h"
-#include "backlight.h"
+#include "displaybrightness.h"
+
+#include <deque>
 
 #include <wglobal.h>
 #include <woutputviewport.h>
@@ -31,6 +33,7 @@ WAYLIB_SERVER_USE_NAMESPACE
 
 class SurfaceWrapper;
 class OutputConfig;
+class GammaBrightness;
 
 class Output : public SurfaceListModel
 {
@@ -122,6 +125,13 @@ public Q_SLOTS:
 private:
     friend class SurfaceWrapper;
 
+    void processOutputColorRequest();
+    void applyColorTemperature();
+    void onBrightnessChanged();
+    void onColorTemperatureChanged();
+    void onOutputColorFailed();
+    void finishOutputColorRequest(bool success);
+
     void setExclusiveZone(Qt::Edge edge, QObject *object, int value);
     bool removeExclusiveZone(QObject *object);
     void arrangeLayerSurface(SurfaceWrapper *surface);
@@ -178,7 +188,18 @@ private:
     QMap<SurfaceWrapper*, QPair<QPointF, QRectF>> m_positionCache;
     QHash<SurfaceWrapper*, QPointF> m_initialWindowPositionRatio;
 
-    std::unique_ptr<Backlight> m_backlight = nullptr;
+    struct OutputColorRequest {
+        qreal brightness;
+        uint colorTemperature;
+        bool colorTemperatureRequested;
+        std::function<void(bool)> callback;
+    };
+    std::deque<OutputColorRequest> m_outputColorRequests;
+    std::unique_ptr<DisplayBrightness> m_brightnessController;
+    std::unique_ptr<GammaBrightness> m_colorTemperatureController;
+    bool m_processingOutputColor = false;
+    bool m_applyingBrightness = false;
+    bool m_applyingColorTemperature = false;
     OutputConfig *m_config;
 };
 

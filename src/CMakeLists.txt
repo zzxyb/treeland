@@ -196,6 +196,12 @@ qt_add_qml_module(libtreeland
         output/output.h
         output/backlight.h
         output/backlight.cpp
+        output/displaybrightness.h
+        output/displaybrightness.cpp
+        output/gammabrightness.h
+        output/gammabrightness.cpp
+        output/ddcutilbrightness.h
+        output/ddcutilbrightness.cpp
         output/outputmanager.cpp
         output/outputmanager.h
         seat/dragcontroller.cpp
