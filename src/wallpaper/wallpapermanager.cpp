@@ -101,6 +101,20 @@ void WallpaperManager::updateWallpaperConfig()
         defaultWallpaperConfig();
     }
     m_wallpaperConfigUpdated = true;
+
+    // Outputs may already exist when switching to a user whose configuration
+    // is empty or was saved for a different set of outputs.
+    for (Output *output : std::as_const(WaylandServer::instance()->outputs())) {
+        ensureWallpaperConfigForOutput(output);
+    }
+
+    // The factory may have bound while another user's configuration was active.
+    // Reloading the cache alone does not ask it to produce the new wallpapers.
+    const auto wallpapers = globalValidWallpaper();
+    for (auto it = wallpapers.cbegin(); it != wallpapers.cend(); ++it) {
+        WaylandServer::instance()->m_wallpaperNotifierInterfaceV1->sendAdd(it.value(), it.key());
+    }
+    Q_EMIT updateWallpaper();
 }
 
 void WallpaperManager::defaultWallpaperConfig()
@@ -120,7 +134,7 @@ void WallpaperManager::defaultWallpaperConfig()
             applyDefaultWallpaper(defaultBackground,
                                   workspaceConfig.desktopWallpaper,
                                   workspaceConfig.desktopWallpapertype);
-            workspaceConfig.workspaceId = i;
+            workspaceConfig.workspaceId = workspace->modelAt(i)->id();
             outputConfig.workspaces.append(workspaceConfig);
         }
         m_wallpaperConfig.append(outputConfig);
@@ -166,19 +180,27 @@ void WallpaperManager::ensureWallpaperConfigForOutput(Output *output)
                                       workspaceConfig.desktopWallpaper,
                                       workspaceConfig.desktopWallpapertype);
             }
-            workspaceConfig.workspaceId = i;
+            workspaceConfig.workspaceId = workspace->modelAt(i)->id();
             outputConfig.workspaces.append(workspaceConfig);
         }
         m_wallpaperConfig.append(outputConfig);
         update = true;
     } else {
+        const QString defaultBackground = WaylandServer::instance()->m_config->defaultBackground();
         QString outputId = output->getOutputId();
         Workspace *workspace = WaylandServer::instance()->workspace();
         Q_ASSERT(workspace);
 
         for (WallpaperOutputConfig &outputConfig : m_wallpaperConfig) {
             if (outputConfig.outputName == outputId) {
-                const WallpaperWorkspaceConfig refConfig = outputConfig.workspaces.first();
+                WallpaperWorkspaceConfig refConfig;
+                if (!outputConfig.workspaces.isEmpty()) {
+                    refConfig = outputConfig.workspaces.constFirst();
+                } else {
+                    applyDefaultWallpaper(defaultBackground,
+                                          refConfig.desktopWallpaper,
+                                          refConfig.desktopWallpapertype);
+                }
                 for (int i = 0; i < workspace->count(); i++) {
                     const int workspaceId = workspace->modelAt(i)->id();
                     if (!outputConfig.containsWorkspace(workspaceId)) {
