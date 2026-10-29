@@ -12,10 +12,32 @@ Item {
     required property SurfaceItem surface
     // surface?.parent maybe is a `SubsurfaceContainer`
     readonly property SurfaceWrapper wrapper: surface?.parent as SurfaceWrapper
+    readonly property XWaylandSurface xwaylandSurface: wrapper?.shellSurface as XWaylandSurface
+    readonly property bool hasClipShape: xwaylandSurface?.hasClipShape ?? false
     readonly property real cornerRadius: wrapper?.radius ?? 0
 
     anchors.fill: parent
     opacity: content.alphaModifier
+
+    function clipShapePaths() {
+        if (!hasClipShape)
+            return [];
+
+        const geometry = xwaylandSurface.geometry;
+        if (geometry.width <= 0 || geometry.height <= 0)
+            return [];
+
+        const scaleX = width / geometry.width;
+        const scaleY = height / geometry.height;
+        const paths = [];
+        for (const contour of xwaylandSurface.clipShape) {
+            const points = [];
+            for (const point of contour)
+                points.push(Qt.point(point.x * scaleX, point.y * scaleY));
+            paths.push(points);
+        }
+        return paths;
+    }
 
     Loader {
         anchors.fill: parent
@@ -31,7 +53,7 @@ Item {
         id: content
         surface: root.surface?.surface ?? null
         anchors.fill: parent
-        opacity: effectLoader.active ? 0 : parent.opacity
+        opacity: (effectLoader.active || shapeLoader.active) ? 0 : parent.opacity
         live: root.surface && !(root.surface.flags & SurfaceItem.NonLive)
         smooth: root.surface?.smooth ?? true
 
@@ -58,6 +80,9 @@ Item {
                     root.wrapper.visibleDecoration;
         }
 
+        opacity: shapeLoader.active ? 0 : 1
+        layer.enabled: shapeLoader.active
+
         sourceComponent: Shape {
             fillMode: Shape.PreserveAspectFit
             preferredRendererType: Shape.CurveRenderer
@@ -75,6 +100,24 @@ Item {
                     topRightRadius: wrapper?.noTitleBar ? cornerRadius * scale : 0
                     bottomLeftRadius: cornerRadius * scale
                     bottomRightRadius: cornerRadius * scale
+                }
+            }
+        }
+    }
+
+    Loader {
+        id: shapeLoader
+
+        anchors.fill: parent
+        active: root.hasClipShape && GraphicsInfo.api !== GraphicsInfo.Software
+        sourceComponent: Shape {
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeWidth: 0
+                fillItem: effectLoader.active ? effectLoader : content
+                fillRule: ShapePath.OddEvenFill
+                PathMultiline {
+                    paths: root.clipShapePaths()
                 }
             }
         }
