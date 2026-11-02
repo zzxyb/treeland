@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmlengine.h"
+#include "desktop/desktopenvironment.h"
 
 #include "common/treelandlogging.h"
 #include "core/rootsurfacecontainer.h"
@@ -68,8 +69,12 @@ QQuickItem *QmlEngine::createComponent(QQmlComponent &component,
                                        QQuickItem *parent,
                                        const QVariantMap &properties)
 {
-    auto context = qmlContext(parent);
-    auto obj = component.beginCreate(context);
+    auto *context = qmlContext(parent);
+    if (!context)
+        context = rootContext();
+    auto *obj = component.beginCreate(context);
+    if (!obj)
+        qCFatal(lcTlQml) << "Can't create component:" << component.errorString();
     if (!properties.isEmpty()) {
         component.setInitialProperties(obj, properties);
     }
@@ -101,8 +106,10 @@ QQuickItem *QmlEngine::createDecoration(SurfaceWrapper *surface, QQuickItem *par
 
 QObject *QmlEngine::createWindowMenu(QObject *parent)
 {
-    auto context = qmlContext(parent);
-    auto obj = windowMenuComponent.beginCreate(context);
+    auto *context = qmlContext(parent);
+    if (!context)
+        context = rootContext();
+    auto *obj = windowMenuComponent.beginCreate(context);
     if (!obj) {
         qCFatal(lcTlQml) << "Can't create WindowMenu:" << windowMenuComponent.errorString();
     }
@@ -129,11 +136,12 @@ QQuickItem *QmlEngine::createXdgShadow(QQuickItem *parent)
     return createComponent(xdgShadowComponent, parent);
 }
 
-QQuickItem *QmlEngine::createTaskSwitcher(Output *output, QQuickItem *parent)
+QQuickItem *QmlEngine::createTaskSwitcher(Output *output, QQuickItem *parent, DesktopEnvironment *desktop)
 {
     return createComponent(taskSwitchComponent,
                            parent,
-                           { { "output", QVariant::fromValue(output) } });
+                           { { "output", QVariant::fromValue(output) },
+                             { "desktop", QVariant::fromValue(desktop) } });
 }
 
 QQuickItem *QmlEngine::createGeometryAnimation(SurfaceWrapper *surface,
@@ -175,7 +183,7 @@ QQuickItem *QmlEngine::createMenuBar(WOutputItem *output, QQuickItem *parent)
 
 QQuickItem *QmlEngine::createWorkspaceSwitcher(Workspace *parent)
 {
-    return createComponent(workspaceSwitcher, parent);
+    return createComponent(workspaceSwitcher, parent, {{"workspaceManager", QVariant::fromValue(parent)}});
 }
 
 QQuickItem *QmlEngine::createNewAnimation(SurfaceWrapper *surface,
@@ -224,9 +232,9 @@ QQuickItem *QmlEngine::createLayerShellAnimation(SurfaceWrapper *surface,
                            });
 }
 
-QQuickItem *QmlEngine::createDockPreview(QQuickItem *parent)
+QQuickItem *QmlEngine::createDockPreview(QQuickItem *parent, DesktopEnvironment *desktop)
 {
-    return createComponent(dockPreviewComponent, parent);
+    return createComponent(dockPreviewComponent, parent, {{"desktop", QVariant::fromValue(desktop)}});
 }
 
 QQuickItem *QmlEngine::createLockScreen([[maybe_unused]] Output *output,

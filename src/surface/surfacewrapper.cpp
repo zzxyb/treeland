@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "surface/surfacewrapper.h"
+#include "session/sessionmanager.h"
+#include "session/session.h"
+#include "session/sessionscene.h"
+#include "session/sessionoutputmanager.h"
 
 #include "common/treelandlogging.h"
 #include "core/qmlengine.h"
@@ -113,6 +117,10 @@ SurfaceWrapper::SurfaceWrapper(SurfaceWrapper *original, QQuickItem *parent)
     , m_modal(false)
     , m_appId(original->m_appId)
 {
+    m_renderingEnabled = original->renderingEnabled();
+    connect(original, &SurfaceWrapper::renderingEnabledChanged, this, [this, original] {
+        setRenderingEnabled(original->renderingEnabled());
+    });
     m_windowTransition = std::make_unique<SurfaceWindowTransition>(this);
     QQmlEngine::setContextForObject(this, m_engine->rootContext());
 
@@ -207,6 +215,8 @@ SurfaceWrapper::SurfaceWrapper(QmlEngine *qmlEngine,
 void SurfaceWrapper::invalidate()
 {
     Q_ASSERT_X(!m_wrapperAboutToRemove, Q_FUNC_INFO, "Can't call `invalidate` twice!");
+    if (m_session)
+        m_session->unregisterWindow(this);
     m_wrapperAboutToRemove = true;
     Q_EMIT aboutToBeInvalidated();
 
@@ -336,6 +346,7 @@ void SurfaceWrapper::setup()
     m_surfaceItem->setShellSurface(m_shellSurface);
     updateSurfaceSizeRatio();
     m_surfaceItem->setDelegate(m_engine->surfaceContentComponent());
+    syncRenderingState();
     // Initialize focus policy even if focus capability state never toggles later.
     m_surfaceItem->setFocusPolicy(hasFocusCapability() ? Qt::StrongFocus : Qt::NoFocus);
 
@@ -447,11 +458,10 @@ void SurfaceWrapper::setup()
     }
 
     if (auto client = m_shellSurface->waylandClient()) {
-        connect(client->socket(),
-                &WSocket::enabledChanged,
-                this,
-                &SurfaceWrapper::onSocketEnabledChanged);
-        onSocketEnabledChanged();
+        if (!m_isProxy)
+            setSession(WaylandServer::instance()->sessionManager()->sessionForClient(client).get());
+        if (!m_visibilitySocket)
+            bindVisibilitySocket(client->socket()->rootSocket());
     }
 
     if (m_type == Type::XdgToplevel && !m_isProxy) // x11 will set later
@@ -577,13 +587,9 @@ void SurfaceWrapper::setup()
     }
     // Connect DConfig windowRadius change so QML bindings re-evaluate radius()
     if (m_type == Type::XdgToplevel || m_type == Type::XWayland) {
-        if (auto *server = WaylandServer::instance()) {
-            if (auto *config = server->config()) {
-                connect(config,
-                        &TreelandUserConfig::windowRadiusChanged,
-                        this,
-                        &SurfaceWrapper::radiusChanged);
-            }
+        if (auto *owner = desktop()) {
+            connect(owner->config(), &TreelandUserConfig::windowRadiusChanged,
+                    this, &SurfaceWrapper::radiusChanged);
         }
     }
 
@@ -764,7 +770,7 @@ void SurfaceWrapper::startPrelaunchSplashHideSequence()
                                     << "targetImplicit=" << targetImplicitSize;
     }
 
-    const bool needImplicitSizeTransition = hasValidTargetImplicitSize && (container() != nullptr)
+    const bool needImplicitSizeTransition = m_renderingEnabled && hasValidTargetImplicitSize && (container() != nullptr)
         && (!qFuzzyCompare(implicitWidth() + 1.0, targetImplicitSize.width() + 1.0)
             || !qFuzzyCompare(implicitHeight() + 1.0, targetImplicitSize.height() + 1.0));
 
@@ -1548,15 +1554,86 @@ void SurfaceWrapper::updateBoundingRect()
     setBoundedRect(dr | rect);
 }
 
+bool SurfaceWrapper::renderingEnabled() const { return m_renderingEnabled; }
+
+void SurfaceWrapper::syncRenderingState()
+{
+    setEnabled(m_renderingEnabled);
+    if (!m_surfaceItem)
+        return;
+    auto flags = m_surfaceItem->flags();
+    if (!m_renderingEnabled && !flags.testFlag(WSurfaceItem::NonLive)) {
+        m_liveSuppressed = true;
+        m_surfaceItem->setFlags(flags | WSurfaceItem::NonLive);
+    } else if (m_renderingEnabled && m_liveSuppressed) {
+        m_liveSuppressed = false;
+        m_surfaceItem->setFlags(flags & ~WSurfaceItem::NonLive);
+    }
+}
+
+void SurfaceWrapper::retireAnimation(QPointer<QQuickItem> &animation)
+{
+    if (!animation)
+        return;
+    disconnect(animation, nullptr, this, nullptr);
+    animation->setVisible(false);
+    animation->setEnabled(false);
+    for (auto *content : animation->findChildren<WSurfaceItemContent *>())
+        content->setLive(false);
+    animation->setParentItem(nullptr);
+    animation->deleteLater();
+    animation = nullptr;
+}
+
+void SurfaceWrapper::suspendAnimations()
+{
+    const bool geometryPending = m_geometryAnimation;
+    const bool windowPending = isWindowAnimationRunning();
+    retireAnimation(m_geometryAnimation);
+    retireAnimation(m_windowAnimation);
+    retireAnimation(m_minimizeAnimation);
+    retireAnimation(m_showDesktopAnimation);
+    m_windowTransitionPending = false;
+    m_windowTransition->resetWindowTransition();
+    setXwaylandPositionFromSurface(true);
+    if (geometryPending && !m_isProxy && !m_wrapperAboutToRemove && WaylandServer::instance()) {
+        if (m_prelaunchSplash && surface() && surface()->mapped() && m_surfaceItem->isReady())
+            startPrelaunchSplashHideSequence();
+        else
+            applySurfaceState();
+    }
+    if (windowPending)
+        Q_EMIT windowAnimationRunningChanged();
+    if (m_wrapperAboutToRemove)
+        deleteLater();
+}
+
+void SurfaceWrapper::setRenderingEnabled(bool enabled)
+{
+    const bool changed = m_renderingEnabled != enabled;
+    m_renderingEnabled = enabled;
+    setEnabled(enabled);
+    if (!enabled)
+        setVisible(false);
+    syncRenderingState();
+    if (!enabled)
+        suspendAnimations();
+    if (changed)
+        Q_EMIT renderingEnabledChanged();
+    updateVisible();
+}
+
 void SurfaceWrapper::updateVisible()
 {
     if (m_wrapperAboutToRemove)
         return;
-    bool isVisible = !m_hideByWorkspace && !isMinimized()
-        && ((surface() && surface()->mapped())
-            || (m_prelaunchSplash && m_prelaunchSplash->isVisible()))
-        && m_socketEnabled && m_hideByshowDesk && !m_confirmHideByLockScreen
-        && WaylandServer::instance()->surfaceBelongsToCurrentSession(this);
+    const bool mapped = surface() && surface()->mapped();
+    // A pure splash must not depend on its child's effective visibility:
+    // hiding this wrapper also hides that child, preventing later restoration.
+    const bool splash = m_prelaunchSplash
+        && (m_type == Type::SplashScreen || m_prelaunchSplash->isVisible());
+    bool isVisible = m_renderingEnabled && !m_hideByWorkspace && !isMinimized() && (mapped || splash)
+        && m_socketEnabled && m_hideByshowDesk && !m_confirmHideByLockScreen;
     setVisible(isVisible);
 }
 
@@ -1649,6 +1726,8 @@ void SurfaceWrapper::tryFlushPendingActivation()
 
 void SurfaceWrapper::startWindowTransition()
 {
+    if (!m_renderingEnabled)
+        return;
     if (!m_windowTransition->active()) {
         m_windowTransitionPending = false;
         if (m_windowAnimation) {
@@ -1700,7 +1779,7 @@ void SurfaceWrapper::finishWindowTransitionOpen()
     m_windowTransitionPending = false;
     // The surface may have unmapped while we were waiting. Drop the
     // component we created above so it does not block a later close path.
-    if (m_wrapperAboutToRemove || !surface() || !surface()->mapped()) {
+    if (!m_renderingEnabled || m_wrapperAboutToRemove || !surface() || !surface()->mapped()) {
         if (m_windowAnimation) {
             m_windowAnimation->deleteLater();
             m_windowAnimation = nullptr;
@@ -1731,6 +1810,8 @@ void SurfaceWrapper::finishWindowTransitionOpen()
 
 void SurfaceWrapper::startWindowCloseTransition()
 {
+    if (!m_renderingEnabled)
+        return;
     Q_ASSERT(m_windowTransition->active());
 
     auto globalRectOpt = m_windowTransition->globalRect();
@@ -1774,6 +1855,8 @@ void SurfaceWrapper::beginWindowTransition(int direction,
 
 void SurfaceWrapper::createNewOrClose(uint direction)
 {
+    if (!m_renderingEnabled)
+        return;
     if (!m_windowAnimationEnabled)
         return;
 
@@ -1950,6 +2033,8 @@ void SurfaceWrapper::onAnimationFinished()
 
 bool SurfaceWrapper::startStateChangeAnimation(const QRectF &targetGeometry)
 {
+    if (!m_renderingEnabled)
+        return false;
     if (m_geometryAnimation) // animation running
         return false;
 
@@ -2046,12 +2131,23 @@ void SurfaceWrapper::onMappedChanged()
     updateVisible();
 }
 
+void SurfaceWrapper::bindVisibilitySocket(WSocket *socket)
+{
+    if (m_visibilitySocket == socket)
+        return;
+    if (m_visibilitySocket)
+        disconnect(m_visibilitySocket, &WSocket::enabledChanged,
+                   this, &SurfaceWrapper::onSocketEnabledChanged);
+    m_visibilitySocket = socket;
+    if (socket)
+        connect(socket, &WSocket::enabledChanged, this, &SurfaceWrapper::onSocketEnabledChanged);
+    onSocketEnabledChanged();
+}
+
 void SurfaceWrapper::onSocketEnabledChanged()
 {
-    if (auto client = shellSurface()->waylandClient()) {
-        m_socketEnabled = client->socket()->rootSocket()->isEnabled();
-        updateVisible();
-    }
+    m_socketEnabled = m_visibilitySocket && m_visibilitySocket->isEnabled();
+    updateVisible();
 }
 
 void SurfaceWrapper::onMinimizeAnimationFinished()
@@ -2064,6 +2160,8 @@ void SurfaceWrapper::onMinimizeAnimationFinished()
 
 void SurfaceWrapper::startMinimizeAnimation(const QRectF &iconGeometry, uint direction)
 {
+    if (!m_renderingEnabled)
+        return;
     if (m_minimizeAnimation) {
         m_minimizeAnimation->setProperty("direction", direction);
         m_minimizeAnimation->setProperty("position", QVariant::fromValue(iconGeometry));
@@ -2115,6 +2213,11 @@ void SurfaceWrapper::onShowDesktopAnimationFinished()
 
 void SurfaceWrapper::startShowDesktopAnimation(bool show)
 {
+    if (!m_renderingEnabled) {
+        setHideByShowDesk(show);
+        updateVisible();
+        return;
+    }
 
     if (m_showDesktopAnimation) {
         m_showDesktopAnimation->disconnect(this);
@@ -2144,7 +2247,7 @@ qreal SurfaceWrapper::radius() const
     // m_radius > 1 means radius was explicitly set via Personalization protocol;
     // m_radius <= 1 means no per-window override, fall back to DConfig.
     if (radius < 1 && m_type != Type::Layer) {
-        radius = WaylandServer::instance()->config()->windowRadius();
+        radius = (desktop() ? desktop()->config()->windowRadius() : 0);
     }
 
     return radius;
@@ -2390,12 +2493,12 @@ void SurfaceWrapper::applyTileMode(TileMode mode, Output *output)
         // Use the cursor's output geometry, not the surface's current output,
         // so maximize lands on the screen the user dragged to (matches preview).
         if (output)
-            setMaximizedGeometry(output->validGeometry());
+            setMaximizedGeometry(output->validGeometryForSurface(this));
         maximize();
         return;
     }
 
-    const QRectF geo = output ? output->tileGeometry(mode) : QRectF();
+    const QRectF geo = output ? output->tileGeometry(mode, this) : QRectF();
     if (!geo.isValid())
         return;
 
@@ -2744,6 +2847,35 @@ void SurfaceWrapper::setIconGeometry(QRect newIconGeometry)
     Q_EMIT iconGeometryChanged();
 }
 
+Session *SurfaceWrapper::session() const
+{
+    return m_session;
+}
+
+DesktopEnvironment *SurfaceWrapper::desktop() const
+{
+    return m_session ? m_session->desktop() : nullptr;
+}
+
+void SurfaceWrapper::setSession(Session *session)
+{
+    Q_ASSERT(!m_session || m_session == session);
+    if (m_session || !session)
+        return;
+    m_session = session;
+    if (session) {
+        session->desktop()->registerSurface(this);
+        bindVisibilitySocket(session->socket()->rootSocket());
+        session->scene()->attach(this);
+        connect(WaylandServer::instance(), &WaylandServer::activeSessionChanged,
+                this, &SurfaceWrapper::updateVisible);
+        connect(WaylandServer::instance(), &WaylandServer::activeSessionChanged,
+                this, &SurfaceWrapper::updateSurfaceSizeRatio);
+    }
+    if (session && (type() == Type::XdgToplevel || type() == Type::XWayland || !shellSurface()))
+        session->registerWindow(this);
+}
+
 int SurfaceWrapper::workspaceId() const
 {
     return m_workspaceId;
@@ -2930,7 +3062,8 @@ void SurfaceWrapper::updateSurfaceSizeRatio()
                                    << "proxy:" << m_isProxy << "type:" << int(m_type);
             return;
         }
-        const qreal targetScale = window()->effectiveDevicePixelRatio();
+        const qreal targetScale = desktop() ? desktop()->outputs()->effectiveScale()
+                                           : window()->effectiveDevicePixelRatio();
         if (m_surfaceItem->bufferScale() < targetScale)
             m_surfaceItem->setSurfaceSizeRatio(targetScale / m_surfaceItem->bufferScale());
         else
@@ -3248,6 +3381,8 @@ QRectF SurfaceWrapper::alignGeometryToPixelGrid(const QRectF &geometry) const
 
 qreal SurfaceWrapper::getOutputDevicePixelRatio(const QPointF &pos) const
 {
+    if (desktop())
+        return desktop()->outputs()->scaleAt(pos);
     if (surface() && !surface()->outputs().isEmpty()) {
         const auto &outputs = surface()->outputs();
 

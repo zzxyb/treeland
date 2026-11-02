@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <wscopedvalue.h>
+#include "session/sessionmanager.h"
 #include "outputmanager.h"
 
 #include "common/treelandlogging.h"
 #include "dconfig/dconfigmanager.h"
 #include "core/rootsurfacecontainer.h"
+#include "core/waylandserver.h"
 #include "modules/output-group/outputgroupmanagerinterfacev1.h"
 #include "output.h"
 #include "outputconfig.hpp"
 #include "session/session.h"
+#include "session/sessionoutputmanager.h"
 #include "surface/surfacewrapper.h"
 #include "treelandconfig.hpp"
 #include "wallpaper/wallpapermanager.h"
@@ -98,22 +101,23 @@ wlr_output_mode *closestOutputMode(WAYLIB_SERVER_NAMESPACE::WOutput *output,
 
 OutputManager::OutputManager(RootSurfaceContainer *rootContainer,
                              TreelandConfig *config,
-                             WallpaperManager *wallpaperManager,
-                             Workspace *workspace,
                              WOutputRenderWindow *renderWindow,
                              QObject *parent)
     : QObject(parent)
     , m_rootContainer(rootContainer)
     , m_config(config)
-    , m_wallpaperManager(wallpaperManager)
-    , m_workspace(workspace)
     , m_renderWindow(renderWindow)
 {
     Q_ASSERT(m_rootContainer);
     Q_ASSERT(m_config);
-    Q_ASSERT(m_wallpaperManager);
-    Q_ASSERT(m_workspace);
     Q_ASSERT(m_renderWindow);
+    connect(m_config, &TreelandConfig::configInitializeSucceed,
+            this, &OutputManager::finishInitialOutputScanIfReady);
+    connect(m_config, &TreelandConfig::configInitializeFailed,
+            this, &OutputManager::finishInitialOutputScanIfReady);
+    connect(m_rootContainer, &RootSurfaceContainer::primaryOutputChanged,
+            this, &OutputManager::configurationChanged);
+    connect(this, &OutputManager::modeChanged, this, &OutputManager::configurationChanged);
 }
 
 void OutputManager::setBackend(WBackend *backend)
@@ -124,14 +128,36 @@ void OutputManager::setBackend(WBackend *backend)
     connect(m_backend, &WBackend::outputRemoved, this, &OutputManager::outputRemoved);
 }
 
-void OutputManager::setOutputManagementProtocol(WOutputManagerV1 *manager)
+void OutputManager::selectSession(Session *session)
 {
-    Q_ASSERT(!m_outputManagementProtocol);
-    m_outputManagementProtocol = manager;
-    connect(m_outputManagementProtocol,
-            &WOutputManagerV1::requestTestOrApply,
-            this,
-            &OutputManager::testOrApplyConfiguration);
+    ++m_sessionGeneration;
+    for (auto *output : std::as_const(m_outputs)) {
+        auto *viewport = ownOutputViewport(output->output());
+        auto *window = viewport ? viewport->outputRenderWindow() : nullptr;
+        if (auto *helper = window ? window->getOutputHelper(viewport) : nullptr)
+            helper->setExtraState({});
+    }
+    if (m_pendingOutputConfig.config && m_pendingOutputConfig.protocol) {
+        m_pendingOutputConfig.protocol->sendResult(m_pendingOutputConfig.config, false);
+    }
+    m_pendingOutputConfig = {};
+    m_session = session;
+}
+
+void OutputManager::setScale(WOutput *target, qreal scale)
+{
+    auto *output = outputFor(target);
+    if (!output || !std::isfinite(scale) || scale <= 0
+        || !configurationReady(output->config()))
+        return;
+    WOutputStateGuard state;
+    wlr_output_state_set_scale(state.get(), scale);
+    if (!wlr_output_commit_state(target->handle(), state.get()))
+        return;
+    output->config()->setScale(scale);
+    if (auto *viewport = ownOutputViewport(target))
+        viewport->setOutputScale(scale);
+    Q_EMIT configurationChanged();
 }
 
 void OutputManager::setOutputGroupInterface(OutputGroupManagerInterfaceV1 *interface)
@@ -255,7 +281,6 @@ void OutputManager::processOutputAdded(WOutput *output)
     // enters the compositor. DConfig restoration is asynchronous and may be
     // unavailable in minimal sessions; delaying registration until it
     // completes leaves newly bound clients with an empty head list forever.
-    m_outputManagementProtocol->newOutput(output);
 
     const bool shouldDisableOutput = !m_initialOutputScanFinished;
     if (shouldDisableOutput) {
@@ -273,7 +298,8 @@ void OutputManager::processOutputAdded(WOutput *output)
             return;
         }
 
-        m_wallpaperManager->ensureWallpaperConfigForOutput(outputObject);
+        if (auto *wallpaper = WaylandServer::instance()->wallpaperManager())
+            wallpaper->ensureWallpaperConfigForOutput(outputObject);
     };
     auto restoreOutputConfig = [this,
                                 output,
@@ -399,6 +425,14 @@ void OutputManager::processOutputAdded(WOutput *output)
     } else {
         publishOutput();
     }
+    // Publish physical changes through each Session's independent protocol.
+    connect(output, &WOutput::modeChanged, this, &OutputManager::configurationChanged);
+    connect(output, &WOutput::scaleChanged, this, &OutputManager::configurationChanged);
+    connect(output, &WOutput::orientationChanged, this, &OutputManager::configurationChanged);
+    connect(output, &WOutput::enabledChanged, this, &OutputManager::configurationChanged);
+    connect(output, &WOutput::positionChanged, this, &OutputManager::configurationChanged);
+    connect(output, &WOutput::adaptiveSyncEnabledChanged, this, &OutputManager::configurationChanged);
+    Q_EMIT outputsChanged();
 }
 
 void OutputManager::outputAdded(WOutput *output)
@@ -453,12 +487,16 @@ void OutputManager::continueOutputAdded()
 
 void OutputManager::finishInitialOutputScanIfReady()
 {
-    if (m_initialOutputScanFinished || !m_backendStartFinished || !m_pendingOutputs.isEmpty()) {
+    if (m_initialOutputScanFinished || !m_backendStartFinished || !m_pendingOutputs.isEmpty()
+        || !configurationReady(m_config)) {
         return;
     }
 
     m_initialOutputScanFinished = true;
-    restoreInitialOutputConfiguration();
+    restoreExtensionModeFromConfig();
+    if (!m_config->singleOutputId().isEmpty())
+        restoreInitialOutputConfiguration();
+    Q_EMIT configurationChanged();
 }
 
 void OutputManager::backendStarted()
@@ -519,12 +557,12 @@ void OutputManager::outputRemoved(WOutput *output)
     // when the output comes back.
     notifyOutputGroupsChanged();
 
-    m_outputManagementProtocol->removeOutput(output);
-    m_wallpaperManager->removeOutputWallpaper(output->handle());
+    WaylandServer::instance()->wallpaperManager()->removeOutputWallpaper(output->handle());
 
     m_powerOffOutputs.remove(output->handle());
 
     delete o;
+    Q_EMIT outputsChanged();
 }
 
 OutputManager::Mode OutputManager::mode() const
@@ -663,12 +701,13 @@ WAYLIB_SERVER_NAMESPACE::WOutputViewport *OutputManager::ownOutputViewport(
 QList<SurfaceWrapper *> OutputManager::workspaceSurfaces(Output *filterOutput) const
 {
     QList<SurfaceWrapper *> surfaces;
+    auto *workspace = WaylandServer::instance()->workspace();
     WAYLIB_SERVER_NAMESPACE::WOutputRenderWindow::paintOrderItemList(
-        m_workspace,
-        [this, &surfaces, filterOutput](QQuickItem *item) -> bool {
+        workspace,
+        [&surfaces, filterOutput, workspace](QQuickItem *item) -> bool {
             auto *surfaceWrapper = qobject_cast<SurfaceWrapper *>(item);
             if (surfaceWrapper
-                && surfaceWrapper->showOnWorkspace(m_workspace->current()->id())
+                && surfaceWrapper->showOnWorkspace(workspace->current()->id())
                 && (!filterOutput || surfaceWrapper->ownsOutput() == filterOutput)) {
                 surfaces.append(surfaceWrapper);
                 return true;
@@ -1197,16 +1236,17 @@ void OutputManager::restoreExtensionModeFromConfig()
 
             auto *output = outputObject->output();
             auto *config = outputObject->config();
-            if (!hasSavedOutputState(config)) {
-                return;
-            }
-
-            const int width = static_cast<int>(config->width());
-            const int height = static_cast<int>(config->height());
-            const int refresh = static_cast<int>(config->refresh());
+            const bool saved = hasSavedOutputState(config);
+            const auto *preferred = wlr_output_preferred_mode(output->handle());
+            const int width = saved ? static_cast<int>(config->width())
+                                    : (preferred ? preferred->width : output->handle()->width);
+            const int height = saved ? static_cast<int>(config->height())
+                                     : (preferred ? preferred->height : output->handle()->height);
+            const int refresh = saved ? static_cast<int>(config->refresh())
+                                      : (preferred ? preferred->refresh : output->handle()->refresh);
             const double scale = config->scale();
             const qlonglong transform = config->transform();
-            if (width <= 0 || height <= 0 || refresh <= 0 || scale <= 0.0
+            if (width <= 0 || height <= 0 || refresh < 0 || scale <= 0.0
                 || transform < WL_OUTPUT_TRANSFORM_NORMAL
                 || transform > WL_OUTPUT_TRANSFORM_FLIPPED_270) {
                 qCWarning(lcTlOutput) << "Ignoring invalid saved extension state for"
@@ -1215,9 +1255,10 @@ void OutputManager::restoreExtensionModeFromConfig()
             }
 
             if (auto *layout = m_rootContainer->outputLayout()) {
-                layout->move(output,
-                             QPoint(static_cast<int>(config->x()),
-                                    static_cast<int>(config->y())));
+                const QPoint position = saved
+                    ? QPoint(static_cast<int>(config->x()), static_cast<int>(config->y()))
+                    : (m_session ? m_session->outputManager()->defaultPosition(outputObject).toPoint() : QPoint());
+                layout->move(output, position);
             }
 
             WOutputStateGuard state;
@@ -1235,11 +1276,16 @@ void OutputManager::restoreExtensionModeFromConfig()
             if (!wlr_output_commit_state(output->handle(), state.get())) {
                 qCCritical(lcTlOutput) << "Failed to restore extension state for"
                                        << output->name();
+                return;
+            }
+            if (auto *viewport = ownOutputViewport(output)) {
+                viewport->setOutputScale(scale);
+                viewport->rotateOutput(static_cast<WOutput::Transform>(transform));
             }
         };
 
         auto *config = outputObject->config();
-        if (config && config->isInitializeSucceeded()) {
+        if (config && (config->isInitializeSucceeded() || config->isInitializeFailed())) {
             restoreOutput();
         }
     }
@@ -1341,10 +1387,11 @@ void OutputManager::setPowerMode(wlr_output_power_v1_set_mode_event *event)
     notifyOutputGroupsChanged();
 }
 
-void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config,
+void OutputManager::testOrApplyConfiguration(WOutputManagerV1 *protocol,
+                                             wlr_output_configuration_v1 *config,
                                              bool onlyTest)
 {
-    QList<WOutputState> states = m_outputManagementProtocol->stateListPending(config);
+    QList<WOutputState> states = protocol->stateListPending(config);
 
     const auto enabledOutputCount = std::count_if(
         states.cbegin(), states.cend(), [](const WOutputState &state) { return state.enabled; });
@@ -1436,15 +1483,18 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
             ok &= wlr_output_test_state(state.output->handle(), newState.get());
         }
 
-        m_outputManagementProtocol->sendResult(config, ok);
+        protocol->sendTestResult(config, ok);
         return;
     }
 
     if (m_pendingOutputConfig.config) {
-        m_outputManagementProtocol->sendResult(m_pendingOutputConfig.config, false);
+        if (m_pendingOutputConfig.protocol)
+            m_pendingOutputConfig.protocol->sendResult(m_pendingOutputConfig.config, false);
     }
 
     m_pendingOutputConfig.config = config;
+    m_pendingOutputConfig.protocol = protocol;
+    m_pendingOutputConfig.owner = m_session;
     m_pendingOutputConfig.states = states;
     m_pendingOutputConfig.pendingCommits = 0;
     m_pendingOutputConfig.allSuccess = true;
@@ -1490,7 +1540,7 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
 
         WOutputViewport *viewport = ownOutputViewport(state.output);
         if (!viewport) {
-            m_outputManagementProtocol->sendResult(config, false);
+            protocol->sendResult(config, false);
             m_pendingOutputConfig = {};
             return;
         }
@@ -1498,7 +1548,7 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
         WOutputRenderWindow *renderWindow = viewport->outputRenderWindow();
         if (!renderWindow) {
             qCWarning(lcTlCore) << "No renderWindow for output" << state.output->name();
-            m_outputManagementProtocol->sendResult(config, false);
+            protocol->sendResult(config, false);
             m_pendingOutputConfig = {};
             return;
         }
@@ -1509,7 +1559,7 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
                 qCWarning(lcTlCore)
                     << "Cannot apply enabled output configuration; output is not in root container"
                     << state.output->name();
-                m_outputManagementProtocol->sendResult(config, false);
+                protocol->sendResult(config, false);
                 m_pendingOutputConfig = {};
                 return;
             }
@@ -1521,7 +1571,7 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
         auto outputHelper = renderWindow->getOutputHelper(viewport);
         if (!outputHelper) {
             qCWarning(lcTlCore) << "No output helper for viewport" << viewport;
-            m_outputManagementProtocol->sendResult(config, false);
+            protocol->sendResult(config, false);
             m_pendingOutputConfig = {};
             return;
         }
@@ -1556,28 +1606,33 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
         if (!outputHelper->setExtraState(extraState)) {
             qCWarning(lcTlCore) << "Failed to set extra state for output"
                                 << state.output->name();
-            m_outputManagementProtocol->sendResult(config, false);
+            protocol->sendResult(config, false);
             m_pendingOutputConfig = {};
             return;
         }
 
         auto pendingConfig = m_pendingOutputConfig.config;
+        const auto generation = m_sessionGeneration;
         const bool enabled = state.enabled;
         const QPoint outputPosition(state.x, state.y);
         QPointer<OutputManager> self(this);
         outputHelper->scheduleCommitJob(
             [self,
              pendingConfig,
+             generation,
              extraState,
              renderWindow,
              viewport,
              output = QPointer<WOutput>(state.output),
              outputPosition,
              enabled](bool success, WOutputHelper::ExtraState committedState) {
-                if (!self) {
+                if (!self)
                     return;
-                }
-
+                const bool currentRequest = self->m_sessionGeneration == generation
+                    && self->m_pendingOutputConfig.config == pendingConfig
+                    && self->m_pendingOutputConfig.owner == self->m_session;
+                // Hardware commits still finish when their requesting Session
+                // changes; always retire the shared output-group bookkeeping.
                 const bool lastInFlight = (--self->m_inFlightOutputCommits <= 0);
                 if (committedState == extraState) {
                     if (success && output) {
@@ -1589,7 +1644,8 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
                             layout->remove(output);
                         }
                     }
-                    self->onOutputCommitFinished(pendingConfig, success);
+                    if (currentRequest)
+                        self->onOutputCommitFinished(pendingConfig, success);
                     if (success && committedState) {
                         const bool wasStateOnlyCommit =
                             (committedState->committed
@@ -1608,7 +1664,8 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
                         << "Commit callback received unexpected state pointer!"
                         << "Expected:" << extraState.get()
                         << "Got:" << committedState.get();
-                    self->onOutputCommitFinished(pendingConfig, false);
+                    if (currentRequest)
+                        self->onOutputCommitFinished(pendingConfig, false);
                 }
 
                 if (lastInFlight && self->m_groupsDirty) {
@@ -1633,7 +1690,8 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
     if (m_pendingOutputConfig.pendingCommits == 0) {
         // Nothing was scheduled (empty configuration or no matching output), so
         // no commit callback will ever finish this apply.
-        m_outputManagementProtocol->sendResult(config, true);
+        protocol->sendResult(config, true);
+        Q_EMIT configurationChanged();
         m_pendingOutputConfig = {};
         notifyOutputGroupsChanged();
     }
@@ -1642,7 +1700,7 @@ void OutputManager::testOrApplyConfiguration(wlr_output_configuration_v1 *config
 void OutputManager::onOutputCommitFinished(wlr_output_configuration_v1 *config,
                                            bool success)
 {
-    if (!config || config != m_pendingOutputConfig.config) {
+    if (!config || config != m_pendingOutputConfig.config || m_pendingOutputConfig.owner != m_session) {
         return;
     }
 
@@ -1694,8 +1752,10 @@ void OutputManager::onOutputCommitFinished(wlr_output_configuration_v1 *config,
         }
     }
 
-    m_outputManagementProtocol->sendResult(config, ok, m_pendingOutputConfig.states);
+    if (m_pendingOutputConfig.protocol)
+        m_pendingOutputConfig.protocol->sendResult(config, ok, m_pendingOutputConfig.states);
     m_pendingOutputConfig = {};
+    Q_EMIT configurationChanged();
 
     // Even a failed apply may have disabled outputs while copy mode was already
     // torn down; re-applying the groups keeps the reported state truthful.

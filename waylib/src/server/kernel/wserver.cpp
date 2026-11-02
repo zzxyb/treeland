@@ -68,7 +68,13 @@ static bool globalFilter(const wl_client *client,
     WServerPrivate *d = reinterpret_cast<WServerPrivate*>(data);
 
     do {
-        if (auto interface = d->q_func()->findInterface(global)) {
+        auto *interface = d->q_func()->findInterface(global);
+        // Native factories may publish related globals before returning their
+        // handles. Keep those globals inside the constructing interface's domain
+        // until their individual wrappers have been attached.
+        if (!interface)
+            interface = d->pendingInterface;
+        if (interface) {
             auto wclient = WClient::get(client);
             if (!interface->ownsClient(wclient))
                 return false;
@@ -123,13 +129,11 @@ void WServerPrivate::init()
         wl_display_set_global_filter(display.get(), globalFilter, this);
     }
 
-    // free follow display
-    [[maybe_unused]] auto ddm = wlr_data_device_manager_create(display.get());
-    [[maybe_unused]] auto psm = wlr_primary_selection_v1_device_manager_create(display.get());
-
     W_Q(WServer);
 
     for (auto i : std::as_const(interfaceList)) {
+        Q_ASSERT(!pendingInterface);
+        QScopedValueRollback<WServerInterface *> constructing(pendingInterface, i);
         i->create(q);
         if (auto global = i->global())
             Q_ASSERT(wl_global_get_interface(global)->name == i->interfaceName());
@@ -444,9 +448,15 @@ bool WServer::detach(WServerInterface *interface)
 {
     W_D(WServer);
     Q_ASSERT(interface != d->pendingInterface);
-    bool ok = d->interfaceList.removeOne(interface);
-    if (!ok)
+    if (!d->interfaceList.contains(interface))
         return false;
+    // Some native managers live until wl_display teardown. Withdraw their
+    // globals before removing the scope lookup, so logout cannot expose them.
+    if (isRunning() && interface->ownsSocket()) {
+        if (auto *global = interface->global())
+            wl_global_remove(global);
+    }
+    d->interfaceList.removeOne(interface);
 
     Q_ASSERT(interface->m_server == this);
     interface->m_server = nullptr;

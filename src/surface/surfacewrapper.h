@@ -23,10 +23,16 @@ WAYLIB_SERVER_USE_NAMESPACE
 
 WAYLIB_SERVER_BEGIN_NAMESPACE
 class WSeat;
+class WSocket;
 WAYLIB_SERVER_END_NAMESPACE
 
 class QmlEngine;
 class Output;
+class Session;
+class DesktopEnvironment;
+Q_MOC_INCLUDE("desktop/desktopenvironment.h")
+Q_MOC_INCLUDE("session/session.h")
+
 class SurfaceContainer;
 class SurfaceWindowTransition;
 class WindowTransitionTarget;
@@ -39,12 +45,15 @@ class SurfaceWrapper : public QQuickItem
     friend class SurfaceContainer;
     friend class SurfaceProxy;
     friend class ShellHandler;
+    friend class SessionPrelaunch;
+    friend class SessionScene;
     friend class LockScreen;
     friend class SurfaceWindowTransition;
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("SurfaceWrapper objects are created by c++")
     Q_PROPERTY(Type type READ type NOTIFY typeChanged)
+    Q_PROPERTY(bool renderingEnabled READ renderingEnabled NOTIFY renderingEnabledChanged FINAL)
     Q_PROPERTY(QString appId READ appId NOTIFY appIdChanged)
     // make to read only
     Q_PROPERTY(qreal implicitWidth READ implicitWidth NOTIFY implicitWidthChanged FINAL)
@@ -72,6 +81,7 @@ class SurfaceWrapper : public QQuickItem
     Q_PROPERTY(qreal borderWidth READ borderWidth NOTIFY borderChanged FINAL)
     Q_PROPERTY(QColor borderColor READ borderColor NOTIFY borderChanged FINAL)
     Q_PROPERTY(bool borderVisible READ borderVisible NOTIFY borderChanged FINAL)
+    Q_PROPERTY(DesktopEnvironment *desktop READ desktop CONSTANT FINAL)
     Q_PROPERTY(SurfaceContainer* container READ container NOTIFY containerChanged FINAL)
     Q_PROPERTY(QQuickItem* titleBar READ titleBar NOTIFY noTitleBarChanged FINAL)
     Q_PROPERTY(QQuickItem* decoration READ decoration NOTIFY noDecorationChanged FINAL)
@@ -264,6 +274,10 @@ public:
     void setBorderValues(qreal width, const QColor &color);
     void setBorderVisible(bool visible);
 
+    bool renderingEnabled() const;
+    Session *session() const;
+    DesktopEnvironment *desktop() const;
+    void setSession(Session *session);
     SurfaceContainer *container() const;
 
     void addSubSurface(SurfaceWrapper *surface);
@@ -452,6 +466,7 @@ Q_SIGNALS:
     void hasFocusCapabilityChanged();
     void prelaunchSplashChanged();
     void typeChanged();
+    void renderingEnabledChanged();
 
 private:
     ~SurfaceWrapper() override;
@@ -477,6 +492,11 @@ private:
                                 Type type); // Transition from pre-launch mode to normal mode
     void updateBoundingRect();
     void updateVisible();
+    void setRenderingEnabled(bool enabled);
+    void syncRenderingState();
+    void suspendAnimations();
+    void retireAnimation(QPointer<QQuickItem> &animation);
+    void bindVisibilitySocket(WAYLIB_SERVER_NAMESPACE::WSocket *socket);
     void updateSubSurfaceStacking();
     void restackWindowAnimationAbove();
     void ensureAboveParent();
@@ -530,6 +550,8 @@ private:
     void setSkipMutiTaskView(bool skip);
 
     QmlEngine *m_engine;
+    QPointer<Session> m_session;
+    QPointer<WAYLIB_SERVER_NAMESPACE::WSocket> m_visibilitySocket;
     QPointer<SurfaceContainer> m_container;
     QList<SurfaceWrapper *> m_subSurfaces;
     SurfaceWrapper *m_parentSurface = nullptr;
@@ -631,6 +653,8 @@ private:
     std::optional<QPoint> m_clientRequstPos;
 
     bool m_socketEnabled{ false };
+    bool m_renderingEnabled{ false };
+    bool m_liveSuppressed{ false };
     bool m_windowAnimationEnabled{ true };
 
     QPointer<WSeat> m_pendingActivationSeat;

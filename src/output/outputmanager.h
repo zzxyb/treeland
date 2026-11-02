@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QList>
 #include <QMap>
 #include <QSet>
@@ -22,6 +23,7 @@ class RootSurfaceContainer;
 class SessionManager;
 class SurfaceWrapper;
 class TreelandConfig;
+class Session;
 class WallpaperManager;
 class Workspace;
 struct wlr_output;
@@ -53,15 +55,12 @@ public:
 
     explicit OutputManager(RootSurfaceContainer *rootContainer,
                            TreelandConfig *config,
-                           WallpaperManager *wallpaperManager,
-                           Workspace *workspace,
                            WAYLIB_SERVER_NAMESPACE::WOutputRenderWindow *renderWindow,
                            QObject *parent = nullptr);
     ~OutputManager() override = default;
 
     Mode mode() const;
     void setBackend(WAYLIB_SERVER_NAMESPACE::WBackend *backend);
-    void setOutputManagementProtocol(WAYLIB_SERVER_NAMESPACE::WOutputManagerV1 *manager);
     void setOutputGroupInterface(OutputGroupManagerInterfaceV1 *interface);
     void setGammaControlManager(wlr_gamma_control_manager_v1 *manager);
     void setOutputPowerManager(wlr_output_power_manager_v1 *manager);
@@ -93,14 +92,21 @@ public:
 
 Q_SIGNALS:
     void modeChanged();
+    void outputsChanged();
+    void configurationChanged();
 
 private Q_SLOTS:
     void continueOutputAdded();
 
 private:
+    friend class SessionOutputChannel;
+    void selectSession(Session *session);
+    void setScale(WAYLIB_SERVER_NAMESPACE::WOutput *output, qreal scale);
+    void testOrApplyConfiguration(WAYLIB_SERVER_NAMESPACE::WOutputManagerV1 *protocol,
+                                  wlr_output_configuration_v1 *config, bool onlyTest);
+
     void setGamma(wlr_gamma_control_manager_v1_set_gamma_event *event);
     void setPowerMode(wlr_output_power_v1_set_mode_event *event);
-    void testOrApplyConfiguration(wlr_output_configuration_v1 *config, bool onlyTest);
     void outputAdded(WAYLIB_SERVER_NAMESPACE::WOutput *output);
     void outputRemoved(WAYLIB_SERVER_NAMESPACE::WOutput *output);
     void processOutputAdded(WAYLIB_SERVER_NAMESPACE::WOutput *output);
@@ -145,12 +151,11 @@ private:
     void restoreScreenAsPrimary(Output *output);
     void switchPrimaryOutput(Output *from, Output *to, const QList<SurfaceWrapper *> &surfaces);
     RootSurfaceContainer *m_rootContainer = nullptr;
-    TreelandConfig *m_config = nullptr;
-    WallpaperManager *m_wallpaperManager = nullptr;
-    Workspace *m_workspace = nullptr;
+    TreelandConfig *const m_config;
+    QPointer<Session> m_session;
+    quint64 m_sessionGeneration = 0;
     WAYLIB_SERVER_NAMESPACE::WOutputRenderWindow *m_renderWindow = nullptr;
     WAYLIB_SERVER_NAMESPACE::WBackend *m_backend = nullptr;
-    WAYLIB_SERVER_NAMESPACE::WOutputManagerV1 *m_outputManagementProtocol = nullptr;
     WAYLIB_SERVER_NAMESPACE::WXdgOutputManager *m_xwaylandOutputManager = nullptr;
     OutputGroupManagerInterfaceV1 *m_outputGroupManager = nullptr;
     WAYLIB_SERVER_NAMESPACE::WListenerOwner m_gammaControlListenerOwner;
@@ -175,6 +180,8 @@ private:
     struct PendingOutputConfig
     {
         wlr_output_configuration_v1 *config = nullptr;
+        QPointer<WAYLIB_SERVER_NAMESPACE::WOutputManagerV1> protocol;
+        QPointer<Session> owner;
         QList<WAYLIB_SERVER_NAMESPACE::WOutputState> states;
         int pendingCommits = 0;
         bool allSuccess = true;

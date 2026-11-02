@@ -1,12 +1,11 @@
 // Copyright (C) 2026 UnionTech Software Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
+#include <utility>
 #include "gesturemanager.h"
 #include "gesturerecognizer.h"
 
 #define MIN_SWIPE_FINGERS 3
-
-GestureManager *GestureManager::m_instance = nullptr;
 
 GestureManager::GestureManager(QObject *parent)
     : QObject(parent)
@@ -14,24 +13,19 @@ GestureManager::GestureManager(QObject *parent)
 {
 }
 
-GestureManager::~GestureManager()
-{
-    if (m_instance == this)
-        m_instance = nullptr;
-}
+GestureManager::~GestureManager() = default;
 
-GestureManager *GestureManager::instance()
+void GestureManager::cancel()
 {
-    if (m_instance == nullptr) {
-        m_instance = new GestureManager();
-    }
-
-    return m_instance;
+    m_touchpadRecognizer->cancelSwipeGesture();
+    m_touchpadRecognizer->cancelHoldGesture();
+    m_touchpadFingerCount = 0;
+    m_sequence = Sequence::None;
 }
 
 [[maybe_unused]] SwipeGesture * GestureManager::registerTouchpadSwipe(const SwipeFeedBack &feed_back)
 {
-    auto swipe_gesture = new SwipeGesture();
+    auto swipe_gesture = new SwipeGesture(this);
     swipe_gesture->setDirection(feed_back.direction);
     swipe_gesture->setMinimumDelta(QPointF(200, 200));
     swipe_gesture->setMaximumFingerCount(feed_back.fingerCount);
@@ -56,7 +50,7 @@ GestureManager *GestureManager::instance()
 
 [[maybe_unused]] HoldGesture * GestureManager::registerTouchpadHold(const HoldFeedBack &feed)
 {
-    auto hold_gesture = new HoldGesture();
+    auto hold_gesture = new HoldGesture(this);
     hold_gesture->setMinimumFingerCount(feed.fingerCount);
     hold_gesture->setMaximumFingerCount(feed.fingerCount);
 
@@ -75,15 +69,19 @@ GestureManager *GestureManager::instance()
 void GestureManager::unregisterTouchpadSwipe(SwipeGesture *gesture)
 {
     m_touchpadRecognizer->unregisterSwipeGesture(gesture);
+    delete gesture;
 }
 
 void GestureManager::unregisterTouchpadHold(HoldGesture *gesture)
 {
     m_touchpadRecognizer->unregisterHoldGesture(gesture);
+    delete gesture;
 }
 
 void GestureManager::processSwipeStart(uint finger)
 {
+    cancel();
+    m_sequence = Sequence::Swipe;
     m_touchpadFingerCount = finger;
     if (m_touchpadFingerCount >= MIN_SWIPE_FINGERS) {
         m_touchpadRecognizer->startSwipeGesture(finger);
@@ -92,6 +90,8 @@ void GestureManager::processSwipeStart(uint finger)
 
 void GestureManager::processSwipeUpdate(const QPointF &delta)
 {
+    if (m_sequence != Sequence::Swipe)
+        return;
     if (m_touchpadFingerCount >= MIN_SWIPE_FINGERS) {
         m_touchpadRecognizer->updateSwipeGesture(delta);
     }
@@ -99,20 +99,30 @@ void GestureManager::processSwipeUpdate(const QPointF &delta)
 
 void GestureManager::processSwipeCancel()
 {
+    if (m_sequence != Sequence::Swipe)
+        return;
     if (m_touchpadFingerCount >= MIN_SWIPE_FINGERS) {
         m_touchpadRecognizer->cancelSwipeGesture();
     }
+    m_touchpadFingerCount = 0;
+    m_sequence = Sequence::None;
 }
 
 void GestureManager::processSwipeEnd()
 {
+    if (m_sequence != Sequence::Swipe)
+        return;
     if (m_touchpadFingerCount >= MIN_SWIPE_FINGERS) {
         m_touchpadRecognizer->endSwipeGesture();
     }
+    m_touchpadFingerCount = 0;
+    m_sequence = Sequence::None;
 }
 
 void GestureManager::processHoldStart(uint finger)
 {
+    cancel();
+    m_sequence = Sequence::Hold;
     m_touchpadFingerCount = finger;
     if (m_touchpadFingerCount >= MIN_SWIPE_FINGERS) {
         m_touchpadRecognizer->startHoldGesture(finger);
@@ -121,9 +131,13 @@ void GestureManager::processHoldStart(uint finger)
 
 void GestureManager::processHoldEnd()
 {
+    if (m_sequence != Sequence::Hold)
+        return;
     if (m_touchpadFingerCount >= MIN_SWIPE_FINGERS) {
         m_touchpadRecognizer->endHoldGesture();
     }
+    m_touchpadFingerCount = 0;
+    m_sequence = Sequence::None;
 }
 
 void GestureManager::setHoldTimeout(int msec)

@@ -7,12 +7,15 @@
 #include <QQmlEngine>
 #include <QSequentialAnimationGroup>
 
+class TreelandUserConfig;
+
 class WorkspaceAnimationController : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
 public:
     explicit WorkspaceAnimationController(QObject *parent = nullptr);
+    void setConfig(TreelandUserConfig *config);
     Q_PROPERTY(qreal refWidth READ refWidth WRITE setRefWidth NOTIFY refWidthChanged FINAL)
     Q_PROPERTY(qreal refGap READ refGap WRITE setRefGap NOTIFY refGapChanged FINAL)
     Q_PROPERTY(qreal refBounce READ refBounce WRITE setRefBounce NOTIFY refBounceChanged FINAL)
@@ -60,6 +63,7 @@ public Q_SLOTS:
     void bounce(uint currentWorkspaceIndex, Direction direction);
     void setRunning(bool running);
     void startSlideAnimation();
+    void cancel();
     void startGestureSlide(qreal cb, bool bounce = false);
 
 private:

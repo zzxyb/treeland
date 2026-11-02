@@ -8,6 +8,7 @@
 #include "core/rootsurfacecontainer.h"
 #include "core/waylandserver.h"
 #include "surface/surfacewrapper.h"
+#include "session/session.h"
 #include <wscoplistener.h>
 
 #include "qwayland-server-treeland-foreign-toplevel-manager-unstable-v3.h"
@@ -225,8 +226,8 @@ void ForeignToplevelManagerInterfaceV3Private::get_dock_preview_context(Resource
     }
 }
 
-ForeignToplevelManagerInterfaceV3::ForeignToplevelManagerInterfaceV3(QObject *parent)
-    : QObject(parent)
+ForeignToplevelManagerInterfaceV3::ForeignToplevelManagerInterfaceV3(Session *session)
+    : SessionComponent(session)
     , WServerInterface()
     , d(new ForeignToplevelManagerInterfaceV3Private(this))
 {
@@ -330,6 +331,7 @@ ForeignToplevelManagerInterfaceV3Private::findHandleForClient(SurfaceWrapper *wr
 
 void ForeignToplevelManagerInterfaceV3::addSurface(SurfaceWrapper *wrapper)
 {
+    Q_ASSERT(wrapper->session() == session());
     if (d->m_surfaces.contains(wrapper)) {
         qCCritical(lcTlProtocol)
         << wrapper << " has been add to foreign toplevel twice";
@@ -343,9 +345,8 @@ void ForeignToplevelManagerInterfaceV3::addSurface(SurfaceWrapper *wrapper)
 
     for (const auto &manager_resource : d->resourceMap()) {
         auto *handle = d->createHandle(manager_resource, entryPtr);
-        if (!handle) {
-            break;
-        }
+        if (!handle)
+            continue;
         d->setupHandleForWrapper(entryPtr, handle);
     }
 }
@@ -388,12 +389,16 @@ void ForeignToplevelManagerInterfaceV3::releaseDockPreviewContext(DockPreviewCon
     d->dockPreviewContexts.removeOne(context);
 }
 
-ForeignToplevelHandleV3 *ForeignToplevelManagerInterfaceV3::handleForIdentifier(uint32_t identifier) const
+ForeignToplevelHandleV3 *ForeignToplevelManagerInterfaceV3::handleForIdentifier(uint32_t identifier,
+                                                                               wl_client *client) const
 {
     for (auto *handle : std::as_const(d->handles)) {
-        if (handle->identifier() == identifier) {
+        if (handle->identifier() != identifier
+            || wl_resource_get_client(handle->resource()) != client)
+            continue;
+        auto *entry = handle->entry();
+        if (entry)
             return handle;
-        }
     }
     return nullptr;
 }
@@ -410,9 +415,8 @@ void ForeignToplevelManagerInterfaceV3Private::bind_resource(Resource *resource)
 {
     for (auto &[wrapper, entry] : m_surfaces) {
         auto *handle = createHandle(resource, entry.get());
-        if (!handle) {
-            return;
-        }
+        if (!handle)
+            continue;
         setupHandleForWrapper(entry.get(), handle);
     }
 }
@@ -790,17 +794,15 @@ void DockPreviewContextV3Private::destroy(Resource *resource)
 
 void DockPreviewContextV3Private::show([[maybe_unused]] Resource *resource, wl_array *identifiers, int32_t x, int32_t y, uint32_t direction)
 {
-    if (!relativeSurface) {
+    if (!relativeSurface)
         return;
-    }
 
     QList<ForeignToplevelHandleV3 *> toplevels;
     const uint32_t *data = reinterpret_cast<const uint32_t *>(identifiers->data);
     const size_t count = identifiers->size / sizeof(uint32_t);
     for (size_t i = 0; i != count; ++i) {
-        if (auto *handle = manager ? manager->handleForIdentifier(data[i]) : nullptr) {
+        if (auto *handle = manager ? manager->handleForIdentifier(data[i], resource->client()) : nullptr)
             toplevels.append(handle);
-        }
     }
 
     if (!identifiers->size)
@@ -970,26 +972,38 @@ void ForeignToplevelHandleV3Private::destroy(Resource *resource)
 
 void ForeignToplevelHandleV3Private::set_maximized([[maybe_unused]] Resource *resource)
 {
+    if (!entry)
+        return;
     Q_EMIT q->requestMaximize(true);
 }
 
 void ForeignToplevelHandleV3Private::unset_maximized([[maybe_unused]] Resource *resource)
 {
+    if (!entry)
+        return;
     Q_EMIT q->requestMaximize(false);
 }
 
 void ForeignToplevelHandleV3Private::set_minimized([[maybe_unused]] Resource *resource)
 {
+    if (!entry)
+        return;
     Q_EMIT q->requestMinimize(true);
 }
 
 void ForeignToplevelHandleV3Private::unset_minimized([[maybe_unused]] Resource *resource)
 {
+    if (!entry)
+        return;
     Q_EMIT q->requestMinimize(false);
 }
 
 void ForeignToplevelHandleV3Private::activate(Resource *resource, struct ::wl_resource *seat)
 {
+    if (!entry)
+        return;
+    if (wl_resource_get_client(seat) != resource->client())
+        return;
     const wlr_seat_client *seat_client = wlr_seat_client_from_resource(seat);
     if (!seat_client) {
         wl_resource_post_error(resource->handle, 0, "wlr_seat_client_from_resource failed!");
@@ -1001,11 +1015,17 @@ void ForeignToplevelHandleV3Private::activate(Resource *resource, struct ::wl_re
 
 void ForeignToplevelHandleV3Private::close([[maybe_unused]] Resource *resource)
 {
+    if (!entry)
+        return;
     Q_EMIT q->requestClose();
 }
 
 void ForeignToplevelHandleV3Private::set_icon_geometry(Resource *resource, struct ::wl_resource *surface, int32_t x, int32_t y, int32_t width, int32_t height)
 {
+    if (!entry)
+        return;
+    if (wl_resource_get_client(surface) != resource->client())
+        return;
     if (width < 0 || height < 0) {
         wl_resource_post_error(resource->handle,
                                TREELAND_FOREIGN_TOPLEVEL_HANDLE_V3_ERROR_INVALID_GEOMETRY,
@@ -1020,6 +1040,8 @@ void ForeignToplevelHandleV3Private::set_icon_geometry(Resource *resource, struc
 
 void ForeignToplevelHandleV3Private::set_fullscreen(Resource *resource, struct ::wl_resource *output)
 {
+    if (!entry)
+        return;
     WOutput *wrappedOutput = nullptr;
     if (output) {
         auto *wlrOutput = wlr_output_from_resource(output);
@@ -1036,6 +1058,8 @@ void ForeignToplevelHandleV3Private::set_fullscreen(Resource *resource, struct :
 
 void ForeignToplevelHandleV3Private::unset_fullscreen([[maybe_unused]] Resource *resource)
 {
+    if (!entry)
+        return;
     Q_EMIT q->requestFullscreen(false, nullptr);
 }
 
