@@ -26,11 +26,28 @@ Item {
         // including holes in an X11 input shape. Only the resize rim is ours.
         containmentMask: QtObject {
             function contains(position: point): bool {
-                return WaylibHelper.getEdges(Qt.rect(0, 0, resizeArea.width, resizeArea.height), position, root.edgeSize) !== 0;
+                if (position.x < 0 || position.y < 0
+                        || position.x >= resizeArea.width || position.y >= resizeArea.height)
+                    return false;
+                if (WaylibHelper.getEdges(Qt.rect(0, 0, resizeArea.width, resizeArea.height), position, root.edgeSize) === 0)
+                    return false;
+                const xwaylandSurface = root.surface.shellSurface as XWaylandSurface;
+                if (!xwaylandSurface || !xwaylandSurface.hasInputShape)
+                    return true;
+
+                const eventItem = root.surface.surfaceItem?.eventItem;
+                if (!eventItem)
+                    return false;
+
+                // Mapping to the event item already accounts for surfaceSizeRatio.
+                const local = eventItem.mapFromItem(resizeArea, position);
+                return local.x >= 0 && local.y >= 0
+                        && local.x < eventItem.width && local.y < eventItem.height
+                        && eventItem.contains(local);
             }
         }
 
-        enabled: surface.type !== SurfaceWrapper.Type.XdgPopup
+        enabled: surface.isResizable && surface.type !== SurfaceWrapper.Type.XdgPopup
                     && surface.type !== SurfaceWrapper.Type.Layer
                     && surface.type !== SurfaceWrapper.Type.SplashScreen
         property int edges: 0
@@ -68,10 +85,14 @@ Item {
             edges = WaylibHelper.getEdges(Qt.rect(0, 0, width, height), Qt.point(event.x, event.y), root.edgeSize)
         }
 
+        onExited: edges = 0
+        onCanceled: edges = 0
+
         onPressed: function (event) {
             // Maybe missing onPositionChanged when use touchscreen
             edges = WaylibHelper.getEdges(Qt.rect(0, 0, width, height), Qt.point(event.x, event.y), root.edgeSize)
-            if (edges)
+            event.accepted = edges !== 0 && containmentMask.contains(Qt.point(event.x, event.y))
+            if (event.accepted)
                 surface.resizeRequested(edges)
         }
     }
