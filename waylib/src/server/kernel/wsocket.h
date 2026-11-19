@@ -109,6 +109,8 @@ public:
     void setEnabled(bool on, const WSocket *excludedSocket = nullptr);
 
 Q_SIGNALS:
+    // Emitted once before clients and descendant sockets are closed.
+    void aboutToClose();
     void enabledChanged();
     void validChanged();
     void listeningChanged();
@@ -128,6 +130,7 @@ private:
     friend void security_context_handle_commit(struct wl_client*,
                                                struct wl_resource*);
     void setParentSocket(WSocket *parent);
+    bool acceptsClients() const;
 };
 
 WAYLIB_SERVER_END_NAMESPACE

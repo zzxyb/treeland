@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 #include <QStringDecoder>
 #include <QPointer>
+#include <QScopedValueRollback>
 
 #include <wayland-server-core.h>
 #include <wcontainerof.h>
@@ -152,6 +153,9 @@ public:
     W_DECLARE_PUBLIC(WSocket)
 
     bool enabled = true;
+    bool closed = false;
+    bool closing = false;
+    QList<QPointer<WSocket>> children;
     const bool freezeClientWhenDisable;
     int fd = -1;
     int fd_lock = -1;
@@ -434,7 +438,7 @@ WSocket::WSocket(WSocket *parentSocket, QObject *parent)
     : QObject(parent)
     , WObject(*new WSocketPrivate(this, parentSocket))
 {
-
+    WSocketPrivate::get(parentSocket)->children.append(this);
 }
 
 WSocket::WSocket(const char *sandboxEngine,
@@ -452,6 +456,8 @@ WSocket::WSocket(const char *sandboxEngine,
 WSocket::~WSocket()
 {
     close();
+    if (auto *parent = parentSocket())
+        WSocketPrivate::get(parent)->children.removeAll(this);
 }
 
 WSocket *WSocket::get(const wl_client *client)
@@ -482,14 +488,18 @@ bool WSocket::isValid() const
 void WSocket::close()
 {
     W_D(WSocket);
-
-    if (d->eventSource) {
-        wl_event_source_remove(d->eventSource);
-        d->eventSource = nullptr;
-        d->display = nullptr;
-        Q_EMIT listeningChanged();
+    if (d->closed)
+        return;
+    d->closed = true;
+    QScopedValueRollback<bool> guard(d->closing, true);
+    stopListen();
+    // Security-context owns its event source outside WSocket.
+    Q_EMIT aboutToClose();
+    const auto children = d->children;
+    for (const auto &child : children) {
+        if (child)
+            child->close();
     }
-    Q_ASSERT(!d->display);
 
     if (d->ownsFd) {
         if (d->fd >= 0) {
@@ -506,10 +516,9 @@ void WSocket::close()
     }
 
     if (!d->clients.isEmpty()) {
-        QList<WClient*> clientsToClose;
-        std::swap(clientsToClose, d->clients);
-        for (auto client : std::as_const(clientsToClose))
-            d->doRemoveClient(client);
+        // A resource destroy callback may remove another client.
+        while (!d->clients.isEmpty())
+            d->doRemoveClient(d->clients.takeFirst());
 
         Q_EMIT clientsChanged();
     }
@@ -555,8 +564,9 @@ bool WSocket::create(const QString &filePath)
 {
     W_D(WSocket);
 
-    if (isValid())
+    if (isValid() || d->closing || (parentSocket() && !parentSocket()->acceptsClients()))
         return false;
+    d->closed = false;
 
     d->fd = wl_os_socket_cloexec(PF_LOCAL, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (d->fd < 0)
@@ -660,8 +670,9 @@ bool WSocket::create(int fd, bool doListen)
 {
     W_D(WSocket);
 
-    if (isValid())
+    if (isValid() || d->closing || (parentSocket() && !parentSocket()->acceptsClients()))
         return false;
+    d->closed = false;
 
     QString socketFile = getSocketFile(fd, true);
     if (socketFile.isEmpty())
@@ -687,8 +698,9 @@ bool WSocket::bind(int fd)
 {
     W_D(WSocket);
 
-    if (isValid())
+    if (isValid() || d->closing || (parentSocket() && !parentSocket()->acceptsClients()))
         return false;
+    d->closed = false;
 
     d->fd = fd;
     d->ownsFd = false;
@@ -726,7 +738,7 @@ bool WSocket::listen(wl_display *display)
 {
     W_D(WSocket);
 
-    if (d->eventSource || !isValid())
+    if (d->eventSource || !isValid() || !acceptsClients())
         return false;
 
     auto loop = wl_display_get_event_loop(display);
@@ -749,9 +761,8 @@ void WSocket::stopListen()
 {
     W_D(WSocket);
 
-    // Mirror the event-source teardown done at the top of close(), but stop
-    // there: keep the fd and the client list so the socket can be listened
-    // again on a rebuilt display after WServer::stop().
+    // Keep the fd and clients so the socket can be listened on again after
+    // WServer::stop()/start().
     if (d->eventSource) {
         wl_event_source_remove(d->eventSource);
         d->eventSource = nullptr;
@@ -761,9 +772,19 @@ void WSocket::stopListen()
     Q_ASSERT(!d->display);
 }
 
+bool WSocket::acceptsClients() const
+{
+    W_DC(WSocket);
+    return !d->closed && (!d->parentSocket || d->parentSocket->acceptsClients());
+}
+
 WClient *WSocket::addClient(int fd)
 {
     W_D(WSocket);
+    if (!acceptsClients() || !d->display) {
+        ::close(fd);
+        return nullptr;
+    }
     auto client = wl_client_create(d->display, fd);
     if (!client) {
         qCWarning(lcWlSocket) << "Failed to create Wayland client for fd:" << fd;
@@ -780,6 +801,8 @@ WClient *WSocket::addClient(int fd)
 WClient *WSocket::addClient(wl_client *client, bool isWlClientOwned)
 {
     W_D(WSocket);
+    if (!acceptsClients())
+        return nullptr;
 
     WClient *wclient = nullptr;
     if ((wclient = WClient::get(client))) {
@@ -799,13 +822,15 @@ void WSocketPrivate::doRemoveClient(WClient *client)
 {
     W_Q(WSocket);
 
+    QPointer<WClient> alive = client;
     Q_EMIT q->aboutToBeDestroyedClient(client);
+    if (!alive)
+        return;
 
     auto handle = client->handle();
     if (handle && client->d_func()->isWlClientOwned) {
-        // Set handle to nullptr to prevent handle_destroy from calling removeClient again
-        client->d_func()->handle = nullptr;
-        delete client;
+        // Keep WClient discoverable while the native client's resources die.
+        // Its early/late listeners clear the handle and then delete WClient.
         wl_client_destroy(handle);
     } else {
         delete client;
@@ -870,7 +895,11 @@ void WSocket::setParentSocket(WSocket *parentSocket)
     W_D(WSocket);
     if (d->parentSocket == parentSocket)
         return;
+    if (d->parentSocket)
+        WSocketPrivate::get(d->parentSocket)->children.removeAll(this);
     d->parentSocket = parentSocket;
+    if (parentSocket)
+        WSocketPrivate::get(parentSocket)->children.append(this);
     Q_EMIT parentSocketChanged();
 }
 

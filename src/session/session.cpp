@@ -7,6 +7,11 @@
 #include "surface/surfacecontainer.h"
 #include "sessionseatmanager.h"
 #include "sessionworkspace.h"
+#include "sessionscene.h"
+#include "sessionprelaunch.h"
+#include "sessionprotocols.h"
+#include "sessionmultitaskview.h"
+#include "sessioninputchannel.h"
 
 #include "common/treelandlogging.h"
 #include "core/shellhandler.h"
@@ -33,12 +38,37 @@ void Session::detachInterface(WServerInterface *interface)
 
     if (auto *server = WaylandServer::instance()) {
         server->server()->detach(interface);
-        delete interface;
     }
+
+    delete interface;
 }
 
 Session::~Session()
 {
+    shutdown();
+}
+
+void Session::beginShutdown()
+{
+    if (m_shuttingDown)
+        return;
+
+    m_shuttingDown = true;
+
+    if (m_scene)
+        m_scene->shutdown();
+
+    if (m_prelaunch)
+        m_prelaunch->shutdown();
+}
+
+void Session::shutdown()
+{
+    if (m_shutdownStarted)
+        return;
+
+    m_shutdownStarted = true;
+    beginShutdown();
     qCDebug(lcTlCore) << "Deleting session for uid:" << m_uid << m_socket;
     if (WaylandServer::instance()) {
         setActive(false);
@@ -67,21 +97,63 @@ Session::~Session()
     if (m_socket)
         m_socket->close();
 
+    // Native surfaces have now been destroyed with their clients. Retire their
+    // disabled wrappers before removing the protocols used by invalidation.
+    if (m_scene)
+        m_scene->finishShutdown();
+
     if (m_seatManager) {
         delete m_seatManager;
         m_seatManager = nullptr;
     }
 
-    if (auto *server = WaylandServer::instance()) {
-        const auto interfaces = m_interfaces;
-        for (auto *interface : interfaces) {
-            server->server()->detach(interface);
-            delete interface;
-        }
+    // Unwind dependencies in reverse attachment order. Resource callbacks have
+    // finished, but keep the desktop alive while protocol wrappers detach.
+    while (!m_interfaces.isEmpty())
+        detachInterface(m_interfaces.constLast());
+
+    if (m_prelaunch) {
+        delete m_prelaunch;
+        m_prelaunch = nullptr;
     }
 
-    delete m_socket;
-    m_socket = nullptr;
+    if (m_multitaskView) {
+        delete m_multitaskView;
+        m_multitaskView = nullptr;
+    }
+
+    if (m_desktop) {
+        delete m_desktop->inputChannel();
+        delete m_desktop;
+        m_desktop = nullptr;
+    }
+
+    m_outputManager = nullptr;
+
+    if (m_protocols) {
+        delete m_protocols;
+        m_protocols = nullptr;
+    }
+
+    if (m_scene) {
+        delete m_scene;
+        m_scene = nullptr;
+    }
+
+    if (m_workspace) {
+        delete m_workspace;
+        m_workspace = nullptr;
+    }
+
+    // Includes the output channel; no Session-owned timers or queued receivers
+    // should survive just because somebody retains the Session's identity.
+    const auto components = children();
+    qDeleteAll(components);
+
+    if (m_socket) {
+        delete m_socket;
+        m_socket = nullptr;
+    }
 }
 
 Workspace *Session::workspace() const
@@ -91,7 +163,7 @@ Workspace *Session::workspace() const
 
 void Session::setActive(bool active)
 {
-    if (m_active == active)
+    if ((active && m_shuttingDown) || m_active == active)
         return;
 
     m_active = active;
@@ -116,6 +188,11 @@ bool Session::ownsClient(WClient *client) const
 
 void Session::attachInterface(WServerInterface *interface)
 {
+    if (m_shuttingDown) {
+        delete interface;
+        return;
+    }
+
     if (m_interfaces.contains(interface))
         return;
 

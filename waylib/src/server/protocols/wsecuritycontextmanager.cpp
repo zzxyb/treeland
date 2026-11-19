@@ -99,15 +99,21 @@ static bool security_context_state_copy(struct wlr_security_context_v1_state *ds
     return ok;
 }
 
+static void security_context_stop_listening(struct wlr_security_context_v1 *context)
+{
+    if (context->listen_source) {
+        wl_event_source_remove(context->listen_source);
+        context->listen_source = nullptr;
+    }
+}
+
 static void security_context_destroy(
     struct wlr_security_context_v1 *security_context) {
     if (security_context == NULL) {
         return;
     }
 
-    if (security_context->listen_source != NULL) {
-        wl_event_source_remove(security_context->listen_source);
-    }
+    security_context_stop_listening(security_context);
     if (security_context->close_source != NULL) {
         wl_event_source_remove(security_context->close_source);
     }
@@ -180,6 +186,10 @@ static int security_context_handle_listen_fd_event(int listen_fd, uint32_t mask,
         }
 
         WClient *wc = security_context->socket->addClient(client);
+        if (!wc) {
+            wl_client_destroy(client);
+            return 0;
+        }
         Q_ASSERT(wc->sandboxEngine() == security_context_client->state.sandbox_engine);
         Q_ASSERT(wc->appId() == security_context_client->state.app_id);
         Q_ASSERT(wc->instanceId() == security_context_client->state.instance_id);
@@ -248,6 +258,10 @@ void security_context_handle_commit(struct wl_client *client,
                                            security_context->state.instance_id,
                                            parentSocket);
     security_context->socket->setObjectName("wlr_security_context_v1_socket");
+    QObject::connect(security_context->socket, &WSocket::aboutToClose,
+                     security_context->socket, [security_context] {
+                         security_context_stop_listening(security_context);
+                     });
     security_context->socket->bind(security_context->listen_fd);
 
     struct wlr_security_context_v1_commit_event event = {
