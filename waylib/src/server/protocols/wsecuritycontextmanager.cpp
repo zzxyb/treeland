@@ -258,10 +258,6 @@ void security_context_handle_commit(struct wl_client *client,
                                            security_context->state.instance_id,
                                            parentSocket);
     security_context->socket->setObjectName("wlr_security_context_v1_socket");
-    QObject::connect(security_context->socket, &WSocket::aboutToClose,
-                     security_context->socket, [security_context] {
-                         security_context_stop_listening(security_context);
-                     });
     security_context->socket->bind(security_context->listen_fd);
 
     struct wlr_security_context_v1_commit_event event = {
