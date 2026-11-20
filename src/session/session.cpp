@@ -21,6 +21,8 @@
 #include "xsettings/settingmanager.h"
 #endif
 
+#include <wlr_all.h>
+
 #include <wsocket.h>
 #include <wforeigntoplevelv1.h>
 #include <wserver.h>
@@ -62,6 +64,49 @@ void Session::beginShutdown()
         m_prelaunch->shutdown();
 }
 
+void Session::closeClients()
+{
+    if (!m_socket)
+        return;
+
+    QList<QPointer<WClient>> clients;
+    QList<QPointer<WSocket>> sockets{m_socket};
+    if (auto *runtime = WaylandServer::instance()) {
+        wl_client *handle;
+        wl_client_for_each(handle, wl_display_get_client_list(runtime->server()->handle())) {
+            auto *client = WClient::get(handle);
+            if (!ownsClient(client))
+                continue;
+
+            clients.append(client);
+            for (auto *socket = client->socket(); socket && socket != m_socket;
+                 socket = socket->parentSocket()) {
+                if (!sockets.contains(socket))
+                    sockets.append(socket);
+            }
+        }
+    }
+
+    for (const auto &socket : sockets) {
+        if (socket)
+            socket->stopListen();
+    }
+
+    // Destroy native resources while WClient still identifies their Session.
+    // Native destruction removes each client from its socket before deleting WClient.
+    // Snapshot QPointers because a resource callback may destroy another client.
+    for (const auto &client : clients) {
+        if (client && client->handle())
+            wl_client_destroy(client->handle());
+    }
+
+    // WSocket::close() only closes its own clients, not descendant sockets.
+    for (const auto &socket : sockets) {
+        if (socket)
+            socket->close();
+    }
+}
+
 void Session::shutdown()
 {
     if (m_shutdownStarted)
@@ -94,8 +139,7 @@ void Session::shutdown()
     }
 #endif
 
-    if (m_socket)
-        m_socket->close();
+    closeClients();
 
     // Native surfaces have now been destroyed with their clients. Retire their
     // disabled wrappers before removing the protocols used by invalidation.

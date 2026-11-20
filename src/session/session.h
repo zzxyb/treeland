@@ -110,6 +110,8 @@ private:
     friend class SessionManager;
     friend class SurfaceProtocolController;
 
+    void closeClients();
+
     DesktopEnvironment *m_desktop = nullptr;
     SessionSeatManager *m_seatManager = nullptr;
     SessionProtocols *m_protocols = nullptr;
